@@ -68,7 +68,7 @@ You should end up with these five files (~186 MB total):
 | File                    | Purpose                            | Size     |
 |-------------------------|------------------------------------|----------|
 | `BRCA_mRNA_top.csv`     | mRNA expression (top 5,000 genes)  | 59 MB    |
-| `BRCA_miRNA_top.csv`    | miRNA expression (366 features)    | 1.8 MB   |
+| `BRCA_miRNA_top.csv`    | miRNA expression (366 raw rows; 200 retained after dropping all-NA features) | 1.8 MB   |
 | `BRCA_Methy_top.csv`    | DNA methylation $\beta$-values     | 59 MB    |
 | `BRCA_CNV_top.csv`      | Gene-level copy-number             | 59 MB    |
 | `BRCA_label_num.csv`    | Numeric subtype labels             | 1.4 KB   |
@@ -96,9 +96,9 @@ MLOmics ships every omic CSV with **features in rows and samples in columns**. T
 :::
 
 ::: {.callout-warning}
-## Missing miRNA names
+## Missing miRNA features
 
-The miRNA file ships with 166 of its 366 features carrying an empty name field, an artefact of the MLOmics processing pipeline. We do not silently drop them, because they may still carry signal. Instead, the loader assigns synthetic names (`unnamed_1`, `unnamed_2`, ...) and deduplicates the rest with `make.unique()`. If your downstream method requires gene-symbol annotation (e.g. pathway enrichment), pre-filter to the named miRNAs.
+The miRNA file ships with 166 of its 366 rows that have **both** an empty name field and entirely missing (`NA`) values across all 671 samples — an artefact of the MLOmics processing pipeline. The loader drops them on read (with an informative `message()` saying how many) because they carry no signal in any downstream method, and because keeping them would crash supervised methods like `splsda()` that error on `NA`. After dropping, the miRNA block has **200 informative features** rather than 366. The `n` is reported here and at the start of every tutorial.
 :::
 
 ## Loading the data

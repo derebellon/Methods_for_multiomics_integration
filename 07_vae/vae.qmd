@@ -85,8 +85,6 @@ We use Python via Quarto's native `python` engine, with PyTorch for the model an
 ```{r}
 #| label: prep-r
 #| message: false
-suppressPackageStartupMessages(library(reticulate))
-
 source("R/load_mlomics.R")
 brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
 
@@ -95,11 +93,17 @@ X_scaled <- scale(X_concat)         # z-score per feature
 y_int <- as.integer(brca$labels) - 1  # 0..4 for Python
 class_names <- levels(brca$labels)
 
-# Hand to Python
-py$X <- as.matrix(X_scaled)
-py$y <- y_int
-py$class_names <- class_names
-dim(py$X)
+# Persist to disk for the Python chunk; this is more robust on Windows than
+# reticulate's in-memory bridge across cached/non-cached chunk boundaries.
+# We use a path relative to the repository root that the Python chunk can
+# resolve identically.
+out_dir <- file.path(getwd(), "_cache", "vae_data")
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+write.csv(as.matrix(X_scaled), file.path(out_dir, "X.csv"), row.names = FALSE)
+write.csv(data.frame(y = y_int), file.path(out_dir, "y.csv"), row.names = FALSE)
+writeLines(class_names, file.path(out_dir, "classes.txt"))
+cat("VAE data written to:", out_dir, "\n")
+dim(X_scaled)
 ```
 
 ::: {.callout-tip}
@@ -114,7 +118,9 @@ dim(py$X)
 #| label: train-vae
 #| cache: true
 
+import os
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -123,16 +129,25 @@ from torch.utils.data import DataLoader, TensorDataset
 torch.manual_seed(42)
 np.random.seed(42)
 
+# Load data prepared by the previous R chunk (lives at <repo>/_cache/vae_data)
+data_dir = os.path.join(os.getcwd(), "_cache", "vae_data")
+X = pd.read_csv(os.path.join(data_dir, "X.csv")).values
+y = pd.read_csv(os.path.join(data_dir, "y.csv")).values.ravel()
+with open(os.path.join(data_dir, "classes.txt")) as f:
+    class_names = [line.strip() for line in f if line.strip()]
+
+print(f"Loaded X: {X.shape}, y: {y.shape}, classes: {class_names}")
+
 # Hyperparameters
 latent_dim = 32
 hidden = [512, 256]
 beta = 1.0
-epochs = 80
+epochs = 30   # tutorial-render budget; raise to 100+ for a real study
 batch_size = 64
 lr = 1e-3
 
-X_t = torch.tensor(np.asarray(X), dtype=torch.float32)
-y_t = torch.tensor(np.asarray(y), dtype=torch.long)
+X_t = torch.tensor(X, dtype=torch.float32)
+y_t = torch.tensor(y, dtype=torch.long)
 
 n, p = X_t.shape
 device = "cpu"   # CPU is fine for this size
@@ -202,6 +217,15 @@ for epoch in range(epochs):
     trace.append((tot/n, tot_r/n, tot_k/n))
 
 print(f"Final epoch: total={trace[-1][0]:.1f} recon={trace[-1][1]:.1f} kld={trace[-1][2]:.1f}")
+
+# Extract the latent embedding now (same Python session) and stash on disk so
+# subsequent chunks can reload without depending on in-memory state.
+model.eval()
+with torch.no_grad():
+    mu, _ = model.encode(X_t)
+Z = mu.cpu().numpy()
+np.save(os.path.join(data_dir, "Z.npy"), Z)
+print(f"Latent embedding shape: {Z.shape}; saved to disk")
 ```
 
 ::: {.callout-tip}
@@ -214,6 +238,7 @@ The final printed line shows the per-sample reconstruction error, KL divergence,
 
 ```{python}
 #| label: extract-latent
+#| eval: false
 model.eval()
 with torch.no_grad():
     mu, _ = model.encode(X_t)
@@ -225,8 +250,19 @@ print(Z.shape)
 
 ```{python}
 #| label: umap
-#| fig-cap: "UMAP projection of the 32-dim VAE latent space, coloured by PAM50 subtype. Cluster separation is the key sanity check for the embedding."
+#| fig-cap: "Two-dimensional projection of the 32-dim VAE latent space, coloured by PAM50 subtype. We attempt UMAP first and fall back to PCA if UMAP cannot be imported."
+import os
+import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
+
+# Reload from disk to make this chunk independent of in-memory state
+data_dir = os.path.join(os.getcwd(), "_cache", "vae_data")
+Z = np.load(os.path.join(data_dir, "Z.npy"))
+y = pd.read_csv(os.path.join(data_dir, "y.csv")).values.ravel()
+with open(os.path.join(data_dir, "classes.txt")) as f:
+    class_names = [line.strip() for line in f if line.strip()]
+
 try:
     import umap
     reducer = umap.UMAP(random_state=42, n_neighbors=20, min_dist=0.3)
@@ -258,11 +294,18 @@ Each dot is a patient placed by UMAP on a 2D map of the 32-dim latent space. Col
 
 ```{python}
 #| label: classify
+import os
+import numpy as np
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 
-clf = LogisticRegression(max_iter=2000, multi_class="multinomial",
-                         class_weight="balanced", C=1.0)
+# Reload Z and y from disk
+data_dir = os.path.join(os.getcwd(), "_cache", "vae_data")
+Z = np.load(os.path.join(data_dir, "Z.npy"))
+y = pd.read_csv(os.path.join(data_dir, "y.csv")).values.ravel()
+
+clf = LogisticRegression(max_iter=2000, class_weight="balanced", C=1.0)
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 scores = cross_val_score(clf, Z, y, cv=cv, scoring="balanced_accuracy")
 print(f"5-fold balanced accuracy: {scores.mean():.3f} ± {scores.std():.3f}")

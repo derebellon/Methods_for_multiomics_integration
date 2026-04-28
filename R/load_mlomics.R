@@ -26,8 +26,10 @@ load_mlomics_brca <- function(data_dir) {
   read_omic <- function(file) {
     raw <- read.csv(file, row.names = NULL, check.names = FALSE)
 
-    # MLOmics' miRNA file ships with 166 empty feature names. Replace with
-    # synthetic names before deduplicating, so we do not silently overwrite.
+    # MLOmics' miRNA file ships with 166 rows that have empty feature names
+    # AND empty (NA) values across all samples. Replace empty names with
+    # synthetic names first so we can identify them later, then drop any
+    # rows that are entirely NA (no signal for any downstream method).
     feature_names <- raw[[1]]
     feature_names[!nzchar(feature_names)] <- paste0(
       "unnamed_", seq_len(sum(!nzchar(feature_names)))
@@ -36,6 +38,14 @@ load_mlomics_brca <- function(data_dir) {
 
     m <- as.matrix(raw[, -1, drop = FALSE])
     rownames(m) <- feature_names
+
+    all_na_rows <- rowSums(is.na(m)) == ncol(m)
+    if (any(all_na_rows)) {
+      message(sprintf("  dropped %d all-NA features from %s",
+                      sum(all_na_rows), basename(file)))
+      m <- m[!all_na_rows, , drop = FALSE]
+    }
+
     t(m)                              # transpose to samples x features
   }
 

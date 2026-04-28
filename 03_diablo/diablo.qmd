@@ -230,10 +230,10 @@ The print summary lists, per block, how many features were retained per componen
 set.seed(42)
 
 test_keepX <- list(
-  mRNA        = c(10, 25, 50),
-  miRNA       = c(10, 25, 50),
-  methylation = c(10, 25, 50),
-  CNV         = c(10, 25, 50)
+  mRNA        = c(15, 40),
+  miRNA       = c(15, 40),
+  methylation = c(15, 40),
+  CNV         = c(15, 40)
 )
 
 tuned <- tune.block.splsda(
@@ -242,8 +242,8 @@ tuned <- tune.block.splsda(
   test.keepX   = test_keepX,
   design       = design,
   validation   = "Mfold",
-  folds        = 5,
-  nrepeat      = 1,
+  folds        = 3,        # tutorial-render budget; raise to 5 for paper
+  nrepeat      = 1,        # raise to 5 for paper
   dist         = "centroids.dist",
   measure      = "BER",
   BPPARAM      = BiocParallel::SerialParam(),
