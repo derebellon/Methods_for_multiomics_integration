@@ -97,12 +97,23 @@ If you prefer `git clone` regardless, the dataset chapter (`01_dataset/dataset.q
 git clone https://github.com/derebellon/Methods_for_multiomics_integration.git
 cd Methods_for_multiomics_integration
 
-# Restore the locked R environment (one-off, takes ~10–20 min the first time)
-Rscript -e 'renv::restore()'
+# Install R dependencies (CRAN + Bioconductor; idempotent)
+Rscript R/install_deps.R
 
-# Render the full website (also takes ~10–20 min on first build because of CV tuning)
+# Download the dataset (~186 MB; one-off)
+bash scripts/download_data.sh
+
+# Render the full website (the first render takes 30-60 minutes because the
+# tuning chunks in DIABLO and MOFA2 are computationally heavy; cached
+# renders after that take seconds per chapter).
 quarto render
 ```
+
+A locked `renv.lock` is **not** included in this initial release because
+the heavier Bioconductor packages (MOFA2, WGCNA) compile from source on
+Windows and the snapshot benchmarking is still in progress. We will
+publish `renv.lock` in a follow-up release once the full render has been
+validated on a clean machine.
 
 The rendered website appears in `_site/`. Open `_site/index.html` in any browser. To rebuild only one tutorial:
 
