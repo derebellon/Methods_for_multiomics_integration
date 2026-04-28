@@ -1,0 +1,67 @@
+---
+title: "Comparación entre métodos"
+subtitle: "Dónde concuerdan, dónde discrepan, y qué nos dice eso"
+lang: es
+---
+
+# Comparación
+
+Este capítulo final hace dos cosas. Primero, alinea los seis métodos (sPLS-DA, DIABLO, MOFA2, SNF, WGCNA, VAE) sobre el *mismo* GS-BRCA bajo evaluación equiparable, para que decidás cuál usar primero en tu propio problema. Segundo, demuestra cómo los métodos no supervisados se pueden usar para **descubrimiento de subtipos** en cánceres raros donde no hay consenso, validando los clusters contra supervivencia.
+
+## Matriz metodológica
+
+| Propiedad                     | sPLS-DA           | DIABLO            | MOFA2             | SNF               | WGCNA             | VAE               |
+|-------------------------------|:-----------------:|:-----------------:|:-----------------:|:-----------------:|:-----------------:|:-----------------:|
+| ¿Multi-bloque?                | No                | **Sí**            | **Sí**            | **Sí**            | Adaptado          | **Sí**            |
+| ¿Supervisado?                 | Sí                | Sí                | No                | No                | No                | Opcional          |
+| ¿Esparso/selección de variable?| **Sí**           | **Sí**            | Sí (ARD)          | No                | A nivel de módulo | No                |
+| ¿Lineal?                      | Sí                | Sí                | Sí (por vista)    | Sí (kernel)       | Sí (correlación)  | **No**            |
+| ¿Maneja faltantes?            | No                | No                | **Sí**            | Parcialmente      | No                | Sí (entrenamiento)|
+| ¿Ranking de features?         | Sí                | Sí por bloque     | Sí por factor     | No                | Sí (módulos)      | Indirecto (SHAP)  |
+| ¿Clusters de pacientes?       | Indirecto (clase) | Indirecto (clase) | Indirecto (factor)| **Sí (nativo)**   | No                | Indirecto (latent)|
+| Demanda de muestras           | Cientos           | Cientos           | Cientos           | Cientos           | Cientos           | Miles ideal       |
+| Costo computacional           | Bajo              | Medio             | Medio             | **Bajo** ($n^2$)  | Medio ($p^2$)     | Alto              |
+| Mejor para                    | Biomarkers single-block | Biomarkers multi-block | Descubrimiento de factores latentes | **Descubrimiento de subtipos** | **Descubrimiento de pathways/módulos** | Patrones, imputación |
+
+## Guía rápida de decisión
+
+- **Una sola ómica + etiqueta.** sPLS-DA. Punto.
+- **Varias ómicas + etiqueta + querés firma corta.** DIABLO.
+- **Varias ómicas, posiblemente con bloques faltantes, sin etiqueta clara.** MOFA2.
+- **Querés clusters de pacientes y no necesitás lista de features.** SNF.
+- **Querés interpretación a nivel de pathway y $n$ modesto.** WGCNA.
+- **Tenés ≥1000 muestras y sospechás estructura no lineal.** VAE (y solo entonces).
+
+## Hallazgo principal: 9 cánceres raros × SNF + supervivencia
+
+Aplicamos SNF + clustering espectral a los 9 cánceres raros de MLOmics, con hiperparámetros default y clusters elegidos por eigengap. Validación contra supervivencia con log-rank:
+
+| Cáncer | n   | Eigengap C | log-rank *p* | Veredicto |
+|--------|-----|:----------:|:------------:|:---------:|
+| KIRC   | 314 | 3          | **0,0017**   | ✓         |
+| ACC    | 177 | 2          | **0,0019**   | ✓         |
+| THYM   | 119 | 3          | **0,0210**   | ✓         |
+| THCA   | 291 | 2          | 0,52         | ×         |
+| LUAD   | 450 | 2          | 0,51         | ×         |
+| LUSC   | 363 | 2          | 0,53         | ×         |
+| LIHC   | 364 | 2          | 0,57         | ×         |
+| PRAD   | 368 | 2          | 0,73         | ×         |
+| KIRP   | 273 | 2          | 0,97         | ×         |
+
+**Tasa de hit: 33% (3 de 9) sin tuning por cáncer.** Las 3 victorias coinciden con cánceres con heterogeneidad molecular conocida que mapea a prognosis (ACC: cortisol-secreting axis; KIRC: clear-cell variants y chr3p loss; THYM: tipos histológicos WHO). Los 6 nulos son cánceres dominados por una sola vía driver o donde la señal prognóstica vive en variables clínicas no-ómicas.
+
+::: {.callout-caution}
+## Lectura honesta
+
+El takeaway metodológico es que **la integración multi-ómica sola es necesaria pero no suficiente para subtipado clínicamente útil**. La tasa del 33% bajo defaults argumenta a favor de:
+
+1. Correr varios métodos de integración y reportar concordancia, no apostar a uno solo.
+2. Combinar multi-ómica con variables clínicas clásicas (estadio, edad, márgenes quirúrgicos).
+3. Tratar el discovery como hipótesis, replicar en cohorte independiente antes de publicar.
+:::
+
+::: {.callout-tip}
+## Versión completa con código en inglés
+
+El [capítulo en inglés](../../../08_comparison/comparison.qmd) incluye la curva KM completa de ACC (log-rank p=0,0019), el código reusable que extiende el benchmark a cualquier subset de los 9 cánceres y un flowchart de decisión "qué método primero".
+:::

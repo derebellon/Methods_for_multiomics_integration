@@ -1,0 +1,70 @@
+---
+title: "Tutorial 6 — Variational Autoencoder"
+subtitle: "Integración generativa profunda de multi-ómica"
+lang: es
+---
+
+# Variational Autoencoder
+
+## Dónde encaja
+
+Los Variational Autoencoders (VAEs) [@kingma2014vae] ocupan el rincón *no lineal, generativo profundo, latente* del panorama. Son el equivalente deep-learning más cercano a MOFA2: ambos extraen una representación latente de baja dimensión, pero los VAEs lo hacen vía redes neuronales con activaciones no lineales, lo que les permite capturar estructura que los métodos lineales no.
+
+::: {.callout-warning}
+## Evaluación honesta para nuestro dataset
+
+GS-BRCA tiene 671 pacientes. Eso es pequeño para modelos generativos profundos y deberíamos esperar que el VAE aquí *rinda peor* que los métodos lineales (MOFA2, DIABLO). Incluimos este tutorial para enseñar el flujo; para un estudio multi-ómico real con VAE necesitarías al menos varios miles de muestras o transfer learning.
+:::
+
+## Intuición
+
+Un VAE es un **autoencoder con un giro probabilístico**. En vez de mapear cada paciente a un solo código latente, el encoder lo mapea a una *distribución* sobre códigos (media y varianza), y el decoder muestrea de esa distribución antes de reconstruir.
+
+El giro probabilístico importa porque fuerza al espacio latente a ser **suave y continuo**: pacientes similares mapean a distribuciones que se solapan, lo que significa que decodificar desde cualquier punto del espacio produce un paciente plausible. Eso es lo que hace al VAE *generativo*: podés muestrear nuevos códigos y decodificarlos en pacientes sintéticos.
+
+El entrenamiento balancea dos objetivos competentes:
+- **Pérdida de reconstrucción.** El output decodificado debe parecerse al input. Empuja al modelo hacia representación fiel.
+- **Divergencia KL.** Las distribuciones del encoder no deben alejarse mucho del prior gaussiano estándar. Empuja al espacio latente hacia compacidad y regularización.
+
+La suma es la **negativa del ELBO**, el objetivo a minimizar.
+
+## Diagnósticos críticos
+
+::: {.callout-caution}
+## Diagnóstico 1: ¿Convergió el modelo?
+
+La pérdida de reconstrucción debe caer monótonamente y aplanarse; la KL debe crecer y luego estabilizarse. Si KL termina en cero, sufriste **posterior collapse**: el modelo ignora el código latente. Soluciones: bajar $\beta$, KL annealing, o decoder más rico.
+:::
+
+::: {.callout-caution}
+## Diagnóstico 2: ¿Está el espacio latente biológicamente organizado?
+
+El UMAP del espacio latente debe mostrar *alguna* estructura PAM50, aunque no perfecta. Nubes random significan que el espacio está gobernado por ejes técnicos o biológicos no relacionados.
+:::
+
+::: {.callout-caution}
+## Diagnóstico 3: ¿Rivaliza con los métodos lineales?
+
+Si el clasificador VAE rinde peor que DIABLO y MOFA2 en este dataset, esa es la expectativa correcta y la conclusión metodológica honesta: **para $n < 1000$, los métodos lineales suelen ganar en integración multi-ómica.** Los VAEs se vuelven competitivos a $n > 5000$ o con transfer learning.
+:::
+
+## Resultado real en GS-BRCA
+
+- 30 epochs, latent_dim=32, batch_size=64, $\beta=1$.
+- Espacio latente 32-dim → UMAP 2D → muestra Basal-like clara a la derecha, LumA/Normal/Her2 mezclados al centro, LumB con dispersión amplia (algunos en el extremo izquierdo).
+- Logistic regression sobre el latent + 5-fold CV: balanced accuracy ≈ 0,55-0,65 (BER 0,35-0,45), en línea con lo predicho — peor que DIABLO (BER 0,24) por la limitación de muestra.
+
+## Limitaciones
+
+- Hambriento de muestras ($n > 1000$ ideal).
+- Latente como caja negra (interpretabilidad requiere SHAP o atribución por atención).
+- Sensible a hiperparámetros (capas ocultas, $\beta$, learning rate, batch size, latent dim).
+- Posterior collapse es un modo de fallo real.
+- Reproducibilidad delicada (CPU vs GPU, versiones de librerías).
+- El input concatenado pierde la estructura multi-bloque (CustOmics, OmiVAE preservan estructura por bloque con encoders separados).
+
+::: {.callout-tip}
+## Versión completa con código en inglés
+
+El [tutorial en inglés](../../../07_vae/vae.qmd) muestra la implementación completa del VAE en PyTorch (encoder/decoder MLP, reparametrization trick, training loop con tracking de ELBO/recon/KL), la extracción del embedding latente, la visualización UMAP y la evaluación con un clasificador downstream.
+:::

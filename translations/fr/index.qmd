@@ -1,0 +1,29 @@
+---
+title: "Méthodes pour l'intégration multi-omique"
+subtitle: "Tutoriels pratiques et reproductibles sur les principales familles méthodologiques"
+lang: fr
+---
+
+# À propos de ce site
+
+Ce site est le **matériel supplémentaire** de la revue méthodologique *"A practical review of multi-omics integration methods"* (Rebellon-Sanchez, en préparation) et du Chapitre 1 de la thèse de doctorat correspondante à la London School of Hygiene & Tropical Medicine. La revue peut être lue indépendamment. Ce site existe pour le lecteur qui finit la revue et se pose la question naturelle : *"très bien, mais comment exécuter cela sur mes propres données ?"*.
+
+::: {.callout-warning}
+## Note de traduction
+
+Cette page française est une traduction assistée par machine du contenu original en anglais. L'auteur ne valide personnellement que les versions anglaise et espagnole. Pour le contenu complet et les détails techniques, consultez la [version anglaise](../../index.qmd). Les corrections sont les bienvenues sous forme de pull requests sur GitHub.
+:::
+
+## Tutoriels disponibles
+
+1. **[sPLS-DA](../../02_splsda/splsda.qmd)** — méthode supervisée à un seul bloc. Ce n'est pas de l'intégration multi-omique en soi mais c'est la base algorithmique de DIABLO.
+2. **[DIABLO](../../03_diablo/diablo.qmd)** — extension multi-bloc de sPLS-DA. *L'intégration multi-omique commence ici.*
+3. **[MOFA2](../../04_mofa2/mofa2.qmd)** — analyse factorielle bayésienne avec vraisemblances mixtes et tolérance aux données manquantes.
+4. **[SNF](../../05_snf/snf.qmd)** — fusion de réseaux de similitude entre patients.
+5. **[WGCNA](../../06_wgcna/wgcna.qmd)** — modules de coexpression au niveau des caractéristiques.
+6. **[VAE](../../07_vae/vae.qmd)** — intégration générative profonde non linéaire.
+7. **[Comparaison](../../08_comparison/comparison.qmd)** — benchmark inter-méthodes + résultats sur 9 cancers rares.
+
+## Citation
+
+Référez-vous au fichier [`CITATION.cff`](https://github.com/derebellon/Methods_for_multiomics_integration/blob/main/CITATION.cff) du dépôt.

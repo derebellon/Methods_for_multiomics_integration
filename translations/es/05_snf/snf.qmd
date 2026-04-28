@@ -1,0 +1,47 @@
+---
+title: "Tutorial 4 — Similarity Network Fusion"
+subtitle: "Integración no supervisada basada en redes de similitud entre pacientes"
+lang: es
+---
+
+# Similarity Network Fusion (SNF)
+
+## Dónde encaja
+
+SNF [@wang2014snf] es el método canónico de *redes de similitud entre pacientes* para integración multi-ómica. Es **no supervisado**, **no paramétrico**, y opera completamente a nivel **muestra × muestra** — nunca a nivel de característica. Eso lo distingue radicalmente de sPLS-DA, DIABLO y MOFA2, que descomponen los datos a nivel de feature.
+
+Usá SNF cuando la **estratificación de pacientes** es el objetivo primario (descubrimiento de subtipos, recomendación de grupos de tratamiento) y cuando los drivers a nivel de feature son secundarios.
+
+## Intuición en tres pasos
+
+1. **Una red de similitud por bloque.** Para cada ómica, construye un grafo donde cada nodo es un paciente y el peso de la arista es la similitud entre ese par en *esa* ómica.
+2. **Cross-talk iterativo.** Actualiza cada red usando información de las otras: una arista en mRNA se refuerza si los mismos pacientes están conectados en metilación; aristas que aparecen en una sola red se atenúan.
+3. **Promediar y clusterizar.** Las redes convergen a una similitud fusionada. Aplicá clustering espectral sobre esa matriz fusionada para obtener grupos.
+
+Lo elegante del paso 2: *amplifica* aristas soportadas por múltiples modalidades y *atenúa* aristas ruidosas presentes en una sola.
+
+## Resultado real en GS-BRCA
+
+- Datos: 671 pacientes × 4 ómicas (después del fix del loader: miRNA pasa de 366 a 200 features informativas).
+- Hiperparámetros default (K=20, α=0,5, T=20).
+- 5 clusters (igual que PAM50): tamaños 123, 199, 19, 228, 102.
+- **NMI vs PAM50: 0,36; ARI vs PAM50: 0,29.**
+
+Lectura honesta: SNF recupera el split dominante luminal-vs-basal pero falla en separar HER2 / Normal con resolución suficiente. NMI > 0,5 sería excelente en este tipo de dato; 0,36 es realista para $n < 1000$ con clases minoritarias muy pequeñas.
+
+## Aplicación en cánceres raros (lo realmente publicable)
+
+El [capítulo comparativo](../08_comparison/comparison.qmd) extiende SNF a los 9 cánceres raros de MLOmics (177-450 pacientes cada uno, sin subtipos consenso conocidos) y valida los clusters contra supervivencia. **Hallazgo: 3 de 9 cánceres (ACC, KIRC, THYM) producen clusters SNF que estratifican supervivencia con log-rank p < 0,025, sin tuning por cáncer.** Los 6 nulos corresponden a cánceres dominados por una sola vía driver. Tasa de hit del 33% bajo hiperparámetros default — un resultado defendible para un paper.
+
+## Limitaciones
+
+- **No interpreta features.** SNF dice qué pacientes agrupan juntos, no por qué. Para features, corré DIABLO o MOFA2 *después* usando el cluster como variable de outcome.
+- **Sensible al número de clusters $C$.** Mal-especificarlo da particiones limpias pero biológicamente inútiles. Usá el eigengap heurístico cuando $C$ no sea conocido a priori.
+- **Trata todos los bloques igual.** Si uno es mucho más ruidoso, contamina la fusión.
+- **Métrica de distancia importa.** Default Euclidean asume features continuas; para CNV categórica o microbioma compositional, usar distancias adaptadas.
+
+::: {.callout-tip}
+## Versión completa con código en inglés
+
+El [tutorial en inglés](../../../05_snf/snf.qmd) muestra los cinco pasos del flujo canónico (estandarización → distancia → afinidad → fusión → clustering espectral), el cálculo de NMI/ARI vs PAM50 con su tabla de contingencia y el heatmap diagonal-bloque de la similitud fusionada.
+:::

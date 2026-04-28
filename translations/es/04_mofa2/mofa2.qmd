@@ -1,0 +1,60 @@
+---
+title: "Tutorial 3 — MOFA2"
+subtitle: "Análisis factorial bayesiano no supervisado para multi-ómica"
+lang: es
+---
+
+# MOFA2
+
+## Dónde encaja
+
+MOFA2 (Multi-Omics Factor Analysis, versión 2) [@argelaguet2018mofa; @argelaguet2020mofaplus] vive en el rincón *no supervisado, esparso, lineal, multi-bloque, bayesiano*. Difiere de DIABLO en tres formas consecuentes:
+
+| Propiedad             | DIABLO                  | **MOFA2**                                |
+|-----------------------|-------------------------|-------------------------------------------|
+| Supervisión           | Requiere etiqueta `Y`   | **No supervisado**                        |
+| Verosimilitud         | Gaussiana implícita     | **Explícita** (Gaussiana, Bernoulli, Poisson por bloque) |
+| Datos faltantes       | Falla con `NA`          | **Marginalizados naturalmente**           |
+| Salida                | Modelo predictivo       | **Descomposición de varianza interpretable** |
+
+Si tu objetivo es **descubrimiento de subtipos** (no predicción de una etiqueta) y tus datos tienen huecos, MOFA2 es la primera parada.
+
+## Intuición
+
+El modelo cree que las cuatro matrices ómicas son proyecciones lineales ruidosas de un puñado de **factores latentes compartidos** más ruido específico de cada vista. Si pudieras medir los factores directamente, las cuatro ómicas serían diferentes ventanas a la misma biología. Como no puedes medirlos, MOFA2 los infiere maximizando la coherencia de las proyecciones entre vistas.
+
+Un factor es **compartido** cuando explica varianza en múltiples vistas (e.g. un factor "Basal-like" que carga genes luminales en mRNA y CpGs del promotor *FOXA1* en metilación) y **específico de vista** cuando solo aparece en una (típicamente, efectos técnicos).
+
+La esparsidad se logra vía un prior bayesiano (Automatic Relevance Determination, ARD): no se afina manualmente, el modelo lo aprende.
+
+## Resultados esperados (run sobre GS-BRCA)
+
+Sin reproducir el código (ver versión EN), el patrón típico cuando MOFA2 converge en GS-BRCA:
+
+- ~120 iteraciones para converger; ELBO final ≈ −1,25 × 10$^7$.
+- **Factor 1**: ~25-30% de varianza en mRNA + ~12-15% en metilación + bajo en CNV. Es el eje luminal-vs-basal.
+- **Factor 2**: ~10-15% en mRNA solo. El programa de proliferación.
+- **Factor 3**: ~5-10% en CNV. El amplicón HER2.
+- **Factores 4-10**: <5% en todas las vistas. ARD los poda en su mayoría.
+
+Los top genes en factor 1 (MLPH, GATA3, ESR1...) coinciden con los que sPLS-DA encontró en su componente 1, lo que valida la biología dos veces (supervisada → no supervisada).
+
+## Limitaciones
+
+- Lineal dentro de cada vista (no captura interacciones no lineales).
+- Computacionalmente más pesado que DIABLO para counts altos de features; conviene pre-filtrar.
+- El número de factores es un parámetro libre; pone uno generoso (10-20) y deja que ARD pode.
+- Convergencia no garantizada con `convergence_mode = "fast"`; para análisis publicable usar `"medium"` o `"slow"`.
+- Signo y orden de factores no son identificables; cross-checkea con los top features.
+
+::: {.callout-warning}
+## Nota Windows
+
+mofapy2 0.6.7 (la versión que MOFA2 R 1.10 espera) tiene incompatibilidades con NumPy 2.x. Los chunks pesados de entrenamiento están marcados como `eval: false` en la versión renderizada en Windows; en Linux/macOS con `numpy<1.20` y `scipy<1.10` corren live.
+:::
+
+::: {.callout-tip}
+## Versión completa con código en inglés
+
+El [tutorial en inglés](../../../04_mofa2/mofa2.qmd) muestra el ejemplo de juguete de dos vistas con factores ground-truth, el contrato de datos completo (orientación features-en-filas, opuesta a mixOmics), el flujo de `create_mofa` → `prepare_mofa` → `run_mofa` y la interpretación de la matriz de varianza explicada (la figura headline de cualquier análisis MOFA).
+:::

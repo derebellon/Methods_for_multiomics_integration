@@ -1,0 +1,45 @@
+---
+title: "Tutorial 5 — WGCNA"
+subtitle: "Integración por red de características vía módulos de coexpresión"
+lang: es
+---
+
+# WGCNA
+
+## Dónde encaja
+
+WGCNA [@langfelder2008wgcna] es el método canónico para análisis de redes **característica × característica**. Es el espejo estructural de SNF: donde SNF construye redes paciente × paciente por bloque y las fusiona, WGCNA construye redes feature × feature e identifica *módulos* de features que covarían dentro de un bloque. La integración multi-ómica en WGCNA se hace post hoc, **correlacionando los eigengenes de los módulos entre bloques**.
+
+Usá WGCNA cuando el objetivo es comprimir miles de features en un puñado de módulos biológicamente significativos, y cuando importa la **interpretación mecanística** a nivel de pathway.
+
+## Intuición en seis pasos
+
+1. **Calcular correlaciones gen-gen** entre pacientes ($O(p^2)$, factible para $p \approx 5000$).
+2. **Elevar las correlaciones absolutas a una potencia $\beta$** para obtener una adyacencia ponderada con topología scale-free.
+3. **Computar el TOM** (Topological Overlap Matrix): dos genes son similares no solo porque correlacionan, sino porque comparten muchos vecinos.
+4. **Clustering jerárquico** sobre $1 - \mathrm{TOM}$, cortado dinámicamente para obtener módulos. Cada módulo recibe un color arbitrario como etiqueta (turquoise, blue, brown...).
+5. **Resumir cada módulo por su eigengene** (la primera componente principal de los genes del módulo). Cada paciente tiene ahora un número por módulo.
+6. **Correlacionar eigengenes con cualquier cosa**: traits clínicos, supervivencia, valores de metilación, composición de microbioma, etc.
+
+## Resultado típico en GS-BRCA mRNA
+
+- $\beta$ elegido por scale-free fit ($R^2 \geq 0,85$).
+- ~10-15 módulos con 50-500 genes cada uno + el bucket "grey" no asignado.
+- La matriz de correlación módulo × PAM50 muestra:
+  - Un módulo con $|r| > 0{,}5$ contra Basal-like (genes top: KRT5, KRT14, FOXC1).
+  - Un módulo $|r| > 0{,}5$ contra LumA (genes luminales clásicos).
+  - Un módulo proliferación que separa LumA de LumB.
+- Cross-omics: correlacionar eigengenes con features de metilación destaca pares mecanísticamente plausibles (e.g. módulo luminal correlaciona negativamente con CpGs en promotores de *FOXA1* y *ESR1*).
+
+## Limitaciones
+
+- **No es nativamente multi-ómica.** La integración es post hoc vía correlaciones de eigengenes.
+- **Computacionalmente costoso.** Memoria crece como $p^2$. Para $p > 20.000$, usar `blockwiseModules()` con `maxBlockSize` reducido.
+- **El soft-threshold $\beta$ es una elección con consecuencias.** Mostrá siempre el plot de `pickSoftThreshold()` en supplementary.
+- **Asume coexpresión implica co-regulación.** A veces falso (e.g. respuestas transitorias a estrés).
+
+::: {.callout-tip}
+## Versión completa con código en inglés
+
+El [tutorial en inglés](../../../06_wgcna/wgcna.qmd) cubre los seis pasos del flujo canónico (`pickSoftThreshold`, `blockwiseModules`, `moduleEigengenes`, `labeledHeatmap` para módulo-trait y módulo-metilación), con interpretación de cada figura y discusión del cross-validation mecanístico de los módulos.
+:::

@@ -8,80 +8,63 @@ lang: es
 
 ## Dónde encaja este método en el panorama multi-ómico
 
-Seamos honestos contigo desde el inicio: **sparse Partial Least Squares Discriminant Analysis (sPLS-DA), tal como lo correremos en este tutorial, no es integración multi-ómica.** Toma *un solo* bloque ómico a la vez (aquí, mRNA) e intenta discriminar clases clínicas a partir de él. Si tu único objetivo es leer sobre métodos que toman varias capas ómicas y las fusionan en un solo modelo, puedes saltar directamente al [capítulo de DIABLO](../03_diablo/diablo.qmd) y volver aquí solo si algo te resulta extraño.
+Seamos honestos contigo desde el inicio: **sparse Partial Least Squares Discriminant Analysis (sPLS-DA), tal como lo correremos en este tutorial, no es integración multi-ómica.** Toma *un solo* bloque ómico a la vez (aquí, mRNA) e intenta discriminar clases clínicas a partir de él. Si tu único objetivo es leer sobre métodos que toman varias capas ómicas y las fusionan en un solo modelo, salta directamente al [capítulo de DIABLO](../03_diablo/diablo.qmd) y vuelve aquí solo si algo te resulta extraño.
 
 Entonces, ¿por qué el primer tutorial de un repositorio de integración multi-ómica trata sobre un método de un solo bloque? Tres razones.
 
-Primero, **DIABLO es sPLS-DA con maquinaria adicional encima.** DIABLO (próximo capítulo) extiende sPLS-DA para que el mismo tipo de descomposición latente esparsa corra simultáneamente sobre varios bloques, con restricciones de correlación cruzada por encima. Si no has construido intuición de qué hace sPLS-DA en un bloque, la extensión multi-bloque te parecerá sopa algebraica. Un lector que entra a DIABLO sabiendo qué hace `keepX`, qué significa un *vector de cargas* y qué muestra `plotIndiv()` aprende la parte de integración aproximadamente al doble de velocidad.
+Primero, **DIABLO es sPLS-DA con maquinaria adicional encima.** DIABLO (próximo capítulo) extiende sPLS-DA para que el mismo tipo de descomposición latente esparsa corra simultáneamente sobre varios bloques. Si no has construido intuición de qué hace sPLS-DA en un bloque, la extensión multi-bloque te parecerá sopa algebraica.
 
-Segundo, **la misma lógica aplica a varios otros métodos del sitio.** MOFA2 es una generalización bayesiana del análisis factorial sobre múltiples bloques; entender el caso lineal de un solo bloque primero hace al caso bayesiano multi-bloque mucho menos intimidante. La fusión de redes (SNF) no factoriza bloques pero sí computa matrices de similitud por bloque que después se promedian; la pregunta de *qué contribuye cada bloque* es la misma que sPLS-DA hace en su primera componente.
+Segundo, **la misma lógica aplica a varios otros métodos del sitio.** MOFA2 es una generalización bayesiana del análisis factorial sobre múltiples bloques; entender el caso lineal de un solo bloque primero hace al caso bayesiano multi-bloque mucho menos intimidante.
 
-Tercero, **los baselines de un solo bloque son parte de la historia metodológica de cualquier paper multi-ómico.** Cuando envías un paper afirmando que integrar cuatro capas ayudó, la primera pregunta que hace un revisor es *"¿comparado con qué?"*. La respuesta casi siempre empieza con sPLS-DA sobre el bloque más fuerte. Saber correr esa comparación limpiamente es parte del flujo de trabajo multi-ómico incluso cuando sPLS-DA no es el método estrella.
+Tercero, **los baselines de un solo bloque son parte de la historia metodológica de cualquier paper multi-ómico.** Cuando un revisor pregunta "¿comparado con qué?", la respuesta empieza casi siempre con sPLS-DA sobre el bloque más fuerte.
 
-Con esas tres razones declaradas, el resto del capítulo es un recorrido cuidadoso de sPLS-DA sobre el bloque mRNA de GS-BRCA, escrito de manera que el siguiente capítulo (DIABLO) pueda moverse rápido por las partes que ya viste.
+## El problema biológico
 
-## El problema biológico que estamos resolviendo
-
-Supón que una colega te entrega 671 pacientes con cáncer de mama. Para cada uno ha medido la expresión de 5.000 genes, y un patólogo ha asignado cada tumor a uno de los cinco subtipos intrínsecos PAM50 (Luminal A, Luminal B, HER2-enriched, Basal-like, Normal-like) [@parker2009pam50]. Te hace dos preguntas acopladas:
+Una colega te entrega 671 pacientes con cáncer de mama, expresión de 5.000 genes por paciente, y un subtipo PAM50 asignado [@parker2009pam50]. Te pregunta dos cosas acopladas:
 
 1. **¿Podemos proyectar a los pacientes sobre un número pequeño de ejes tales que los cinco subtipos formen nubes distinguibles?**
 2. **¿Qué genes impulsan esa separación?**
 
-Una respuesta útil es algo que un clínico pueda leer en dos figuras: un scatter 2D donde los subtipos formen nubes separadas, y una lista corta y rankeada de genes que explique por qué. Queremos obtener ambos a la vez, usando un solo método, y queremos que el método **descarte los genes que no contribuyen** en lugar de diluir la interpretación entre las 5.000 cargas.
+sPLS-DA contesta ambas con un solo modelo y devuelve una lista corta de genes seleccionados (la mayoría de pesos forzados a cero por la penalización L1).
 
-Esa descripción es la receta de sPLS-DA.
-
-## Intuición antes de cualquier ecuación
-
-Imagina a los 671 pacientes como una nube de puntos en un espacio de 5.000 dimensiones (un eje por gen). Un *Análisis de Componentes Principales* (PCA) estándar rotaría los ejes de esa nube para alinearlos con direcciones de máxima varianza, ignorando completamente a qué subtipo pertenece cada paciente. Algunos de esos ejes PCA podrían separar los subtipos por casualidad, pero sería pura suerte.
-
-*Partial Least Squares Discriminant Analysis* (PLS-DA) hace algo más deliberado: rota los ejes de manera que, **a lo largo de los nuevos ejes, los pacientes del mismo subtipo se sienten cerca y los pacientes de subtipos distintos se sienten lejos.** La rotación se codifica en un vector de pesos, que llamaremos $w$. Cada gen recibe un peso, y la "puntuación" del paciente sobre el nuevo eje es la suma ponderada de sus valores de expresión génica.
-
-Si dejamos que $w$ tenga peso no nulo para cada gen, terminamos con un modelo que usa los 5.000 genes y es imposible de interpretar biológicamente. El "sparse" de sPLS-DA arregla eso. Una penalización (L1, o *lasso*) fuerza a la mayoría de los pesos a ser exactamente cero, dejando solo un puñado de genes (cuántos lo elegimos) con peso no nulo. Esos son las **características seleccionadas**: la lista corta de biomarcadores que prometimos a la colega.
-
-Después podemos extraer un *segundo* eje, un *tercero*, cada uno ortogonal al previo y seleccionando su propia lista corta de genes. Un modelo con tres componentes es por tanto una proyección 3D de la nube original 5.000-dimensional, anclada en tres listas cortas de genes parcialmente disjuntas.
-
-## Un glosario que vas a necesitar
-
-Antes de las ecuaciones y el código, aquí están los términos recurrentes que usaremos. Ninguno es exclusivo de mixOmics; son vocabulario estándar de modelos de variable latente.
-
-::: {.callout-note}
 ## Glosario rápido
 
-- **Componente / variable latente / variate.** Un eje nuevo construido como combinación ponderada de las características originales. *PC1* (primer componente principal), *Componente 1* y *variable latente 1* refieren a la misma idea con vocabularios distintos según la librería.
-- **Score / valor de variate.** La posición numérica de un solo paciente sobre una componente. Con tres componentes y 671 pacientes obtienes una matriz de scores 671 × 3.
-- **Loading.** El peso asignado a una característica sobre una componente. Un loading de cero significa que esa característica no es usada por esa componente.
-- **`keepX`.** El número de loadings no nulos a retener por componente (la forma conveniente de controlar la penalización L1 en mixOmics).
-- **`ncomp`.** El número de componentes a calcular.
-- **Validación cruzada (CV).** Un procedimiento que divide los datos en folds, ajusta el modelo en la mayoría y evalúa en el fold retenido, repitiendo. *5-fold CV* repite esto 5 veces. *Estratificada* asegura que cada fold preserve las proporciones de clase del dataset completo.
-- **`nrepeat`.** Número de repeticiones independientes del procedimiento de CV con semillas aleatorias distintas. Mayor = estimación más estable, más lento.
-- **Tasa de Error Balanceada (BER).** Media de las tasas de error por clase. Con clases desbalanceadas, BER es un resumen más justo que la precisión global: un clasificador que siempre predice la clase mayoritaria saca 0% de precisión en cada clase minoritaria y BER lo refleja.
-- **`max.dist`.** Una regla de predicción usada por `mixOmics`: un nuevo paciente se asigna a la clase cuyo centroide está más cerca en el espacio de componentes, usando un criterio de distancia máxima. Otras opciones son `centroids.dist` y `mahalanobis.dist`; `max.dist` es el default documentado para sPLS-DA.
-- **`perf()`.** Función de mixOmics que re-corre validación cruzada sobre un modelo *fijo* (después del tuning) para dar una estimación honesta de rendimiento, incluyendo error por clase.
+::: {.callout-note}
+## Términos que aparecen en todo el tutorial
+
+- **Componente / variable latente / variate.** Eje nuevo construido como combinación ponderada de las características originales.
+- **Score.** Posición numérica de un paciente sobre una componente.
+- **Loading.** Peso asignado a una característica en una componente. Cero significa "no usada".
+- **`keepX`.** Número de loadings no nulos a retener por componente.
+- **Validación cruzada estratificada (CV).** Procedimiento que divide los datos en folds preservando proporciones de clase, ajusta el modelo en la mayoría y evalúa en el fold retenido.
+- **Tasa de Error Balanceada (BER).** Media de las tasas de error por clase. Más justa que la precisión global cuando las clases están desbalanceadas.
+- **`max.dist`.** Regla de predicción usada por mixOmics: asigna el paciente a la clase cuyo centroide está más cerca en el espacio de componentes.
 :::
 
-## Formulación matemática
+## Resultados esperados (resumen del run real sobre GS-BRCA mRNA)
 
-Con la intuición y el glosario en mano, las ecuaciones son cortas. Sea $X \in \mathbb{R}^{n \times p}$ la matriz de expresión génica con $n = 671$ pacientes en filas y $p = 5{.}000$ genes en columnas, centrada y escalada por gen. Sea $Y \in \{0,1\}^{n \times K}$ una codificación one-hot de los $K = 5$ subtipos.
+Sin reproducir todo el código aquí (ver la [versión en inglés](../../../02_splsda/splsda.qmd) para el flujo paso a paso ejecutable), los resultados clave de nuestra ejecución real:
 
-PLS-DA encuentra pares sucesivos de vectores de pesos $(w_h, c_h)$ que maximizan la covarianza entre las puntuaciones proyectadas [@barker2003pls]:
+- **Tuning eligió 3 componentes con `keepX = (25, 200, 25)`.** BER cae de 0,60 (1 componente) a 0,50 (2) a 0,35 (3).
+- **Componente 1 captura el eje luminal-vs-basal.** Los 5 genes top (MLPH, GATA3, ESR1, PSAT1, SLC44A4) son marcadores luminales y basales clásicos. Después de C1, LumA y Basal se clasifican casi perfectamente; HER2, LumB y Normal con error de 1,00.
+- **Componente 2 captura el eje de proliferación.** Genes top: TOP2A, UBE2T, UBE2C, TPX2, NUSAP1, KIF4A, KIF11, CDC25C — los mismos del Oncotype DX. LumB error baja de 1,00 a 0,45.
+- **Componente 3 recupera el amplicón HER2.** PGAP3 (cromosoma 17q12, dentro del amplicón HER2) lidera la firma. HER2 error baja de 1,00 a 0,25.
+- **Normal-like queda en error 1,00 con las 3 componentes.** El subtipo se define por *ausencia* de señal (perfil de metilación silencioso, similar al epitelio normal), algo que mRNA solo no puede capturar. Esto motiva DIABLO con las 4 ómicas en el siguiente capítulo.
 
-$$
-\max_{w,\,c}\; \mathrm{Cov}(Xw,\,Yc) \quad \text{s.t.} \quad \|w\|_2 = \|c\|_2 = 1.
-$$
+## Limitaciones
 
-En lenguaje llano: encuentra el vector de pesos de genes $w$ y el vector de pesos de clases $c$ tales que las puntuaciones de los pacientes sobre $X$ ($Xw$) y sobre $Y$ ($Yc$) se muevan juntas tanto como sea posible, con ambos vectores normalizados para que el problema tenga solución única.
+- **Lineal.** No captura interacciones ni efectos umbral.
+- **Un solo bloque.** Para integrar mRNA + miRNA + metilación + CNV simultáneamente necesitas DIABLO.
+- **Sensible a la escala.** mixOmics centra y escala internamente; pre-procesamientos exóticos pueden romperlo.
+- **No tolera valores faltantes.** Para missing por bloque, MOFA2 es la opción correcta.
+- **El desbalance de clases puede engañar.** Reportá siempre el error por clase, no solo el promedio.
 
-sPLS-DA agrega la penalización L1 sobre los pesos de genes para realizar selección de variables [@lecao2008splsda]:
+## Lo que queda fuera
 
-$$
-\max_{w,\,c}\; \mathrm{Cov}(Xw,\,Yc) - \lambda \|w\|_1 \quad \text{s.t.} \quad \|w\|_2 = \|c\|_2 = 1.
-$$
+Este tutorial clasifica LumA y Basal con error casi cero usando sólo mRNA, identifica el eje de proliferación en C2 y recupera el amplicón HER2 en C3. El precio es BER 0,35 y un fallo total en Normal-like. La pregunta natural —¿pueden las 4 ómicas hacer lo que una sola no puede?— se responde en el [siguiente capítulo (DIABLO)](../03_diablo/diablo.qmd).
 
-En `mixOmics` no afinas $\lambda$ directamente. En su lugar fijas `keepX`, el *número* de pesos no nulos a mantener por componente; el paquete elige $\lambda$ internamente para acertar exactamente ese número de características.
+::: {.callout-tip}
+## Versión completa con código en inglés
 
-::: {.callout-note}
-## Resto del tutorial
-
-El resto del tutorial (ejemplo de juguete, contrato de datos, flujo canónico paso a paso, lectura de outputs, interpretación crítica con números reales y limitaciones) replica fielmente la versión en inglés. Para mantener este archivo sincronizado con el original, consulta la [versión inglesa](../../../02_splsda/splsda.qmd) por ahora; la traducción completa de las secciones restantes se publicará en la próxima iteración.
+El [tutorial en inglés](../../../02_splsda/splsda.qmd) incluye el ejemplo de juguete a mano paso a paso, el contrato de datos completo de `mixOmics::splsda()`, los siete pasos del flujo canónico con interpretación crítica de cada output (`tune.splsda` plot, `plotIndiv`, `plotVar`, `plotLoadings`, `selectVar`, `perf`), y discusión detallada de cada métrica. Esa página es la fuente de verdad para reproducir los resultados localmente.
 :::

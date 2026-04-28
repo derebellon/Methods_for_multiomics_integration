@@ -1,0 +1,29 @@
+---
+title: "多组学整合方法"
+subtitle: "关于主要方法学家族的实用、可重复教程"
+lang: zh
+---
+
+# 关于本站
+
+本站是方法学综述 *"A practical review of multi-omics integration methods"*（Rebellon-Sanchez，撰写中）以及伦敦卫生与热带医学院相应博士论文第一章的**补充材料**。综述可以独立阅读。本站旨在服务于完成综述阅读后会自然提出下列问题的读者：*"好的，但是我如何在自己的数据上实际运行这些方法？"*
+
+::: {.callout-warning}
+## 翻译说明
+
+此中文页面是英文原始内容的机器辅助翻译。作者仅亲自验证英文和西班牙文版本。如需完整内容和技术细节，请参阅[英文版本](../../index.qmd)。欢迎在 GitHub 上以 pull request 形式提交修正。
+:::
+
+## 可用教程
+
+1. **[sPLS-DA](../../02_splsda/splsda.qmd)**：单块监督方法。本身不是多组学整合，但它是 DIABLO 的算法基础。
+2. **[DIABLO](../../03_diablo/diablo.qmd)**：sPLS-DA 的多块扩展。*多组学整合从这里开始。*
+3. **[MOFA2](../../04_mofa2/mofa2.qmd)**：贝叶斯因子分析，支持混合似然和缺失数据。
+4. **[SNF](../../05_snf/snf.qmd)**：患者相似性网络融合。
+5. **[WGCNA](../../06_wgcna/wgcna.qmd)**：特征级别的共表达模块。
+6. **[VAE](../../07_vae/vae.qmd)**：非线性深度生成式整合。
+7. **[比较](../../08_comparison/comparison.qmd)**：跨方法基准测试 + 9 种罕见癌症的结果。
+
+## 引用
+
+请参阅仓库中的 [`CITATION.cff`](https://github.com/derebellon/Methods_for_multiomics_integration/blob/main/CITATION.cff) 文件。

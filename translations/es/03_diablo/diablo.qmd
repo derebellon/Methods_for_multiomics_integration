@@ -1,0 +1,62 @@
+---
+title: "Tutorial 2 — DIABLO"
+subtitle: "Integración esparsa de variables latentes sobre cuatro bloques ómicos"
+lang: es
+---
+
+# DIABLO
+
+## Dónde encaja este método
+
+Este es el primer capítulo que realiza **integración multi-ómica genuina**. Alimentamos cuatro bloques ómicos (mRNA, miRNA, metilación, CNV) en un solo modelo y le pedimos que encuentre componentes latentes que simultáneamente discriminen los subtipos PAM50 *y* estén correlacionados entre bloques.
+
+DIABLO (Data Integration Analysis for Biomarker discovery using Latent components) [@singh2019diablo] vive en el rincón *supervisado, esparso, lineal, multi-bloque* del panorama metodológico. Es la extensión multi-bloque del [tutorial sPLS-DA](../02_splsda/splsda.qmd); todo lo que aprendiste sobre `keepX`, loadings y `plotIndiv()` se traslada directamente.
+
+## La pregunta y la intuición
+
+La colega vuelve con los mismos 671 pacientes pero ahora con cuatro matrices: ¿hay una **firma multi-ómica** —un conjunto pequeño de mRNAs, miRNAs, CpGs y regiones amplificadas— que tomada en conjunto discrimina los cinco subtipos mejor que mRNA solo, y *los moléculas en esa firma están correlacionadas entre bloques*?
+
+DIABLO construye **un eje por bloque por componente**, pero los restringe vía una **matriz de diseño** $D$ para que los scores de pacientes sobre esos cuatro ejes (en una misma componente) estén correlacionados entre sí. Si $D = 0$, DIABLO se reduce a cuatro sPLS-DA independientes; si $D = 1$, fuerza máxima coherencia inter-bloque a costa de algo de discriminación. El default $D = 0{,}1$ es un compromiso recomendado por los autores.
+
+## El hallazgo principal en GS-BRCA
+
+Comparativa real de error CV por clase contra sPLS-DA single-block:
+
+| Subtipo | sPLS-DA (mRNA, 3 comp) | DIABLO (4 bloques, 2 comp) | Dirección |
+|---------|:----------------------:|:--------------------------:|:---------:|
+| LumA    | 0,04                   | 0,30                       | ↑ peor    |
+| Her2    | 0,25                   | 0,45                       | ↑ peor    |
+| LumB    | 0,46                   | 0,27                       | ↓ mejor   |
+| Normal  | **1,00**               | **0,10**                   | ↓↓ mucho mejor |
+| Basal   | 0,02                   | 0,09                       | ↑ ligeramente peor |
+| **BER** | **0,35**               | **0,24**                   | ↓ mejor   |
+
+::: {.callout-caution}
+## La gran victoria es Normal-like
+
+El subtipo que sPLS-DA single-block no podía clasificar (error 1,00) baja a 0,10 cuando se añade metilación. Eso es exactamente la promesa de la integración multi-ómica funcionando: Normal-like se define por un *perfil de metilación silencioso* cercano al epitelio mamario normal, una característica invisible a la expresión de mRNA pero obvia en valores $\beta$.
+:::
+
+::: {.callout-caution}
+## El trade-off integración vs discriminación
+
+LumA y Basal empeoran ligeramente. Eso es normal: la matriz de diseño fuerza coherencia entre bloques, lo que cuesta unos puntos sobre las clases fáciles a cambio de la ganancia drástica en Normal-like. **No hay almuerzo gratis**; la pregunta es qué trade-off es clínicamente más útil, y rescatar una clase no clasificable suele valer la pequeña pérdida.
+:::
+
+## Limitaciones
+
+- Lineal y supervisado, igual que sPLS-DA.
+- El tamaño muestral se reparte entre bloques: el ratio sample-to-feature efectivo por bloque sigue exigente.
+- La matriz de diseño es una elección con consecuencias reales; un revisor puede legítimamente pedir análisis de sensibilidad sobre $D$.
+- El alineamiento de pacientes entre bloques es responsabilidad tuya: el paquete no verifica que las filas correspondan al mismo paciente en el mismo orden.
+- Computacionalmente más pesado que sPLS-DA, sobre todo el tuning.
+
+## Lo que queda fuera
+
+DIABLO da una firma esparsa, interpretable, por bloque, con un score cuantitativo de integración. Lo que no hace: (i) tolerar valores faltantes cuando bloques enteros faltan para algunos pacientes (próximo capítulo, MOFA2, lo arregla); (ii) descubrir subtipos cuando no hay etiquetas (MOFA2 y SNF resuelven eso).
+
+::: {.callout-tip}
+## Versión completa con código en inglés
+
+El [tutorial en inglés](../../../03_diablo/diablo.qmd) muestra el ejemplo de juguete con dos bloques, el contrato completo de `mixOmics::block.splsda()`, los siete pasos del flujo (matriz de diseño, baseline, tuning, fit final, `plotDiablo`, `plotIndiv` por bloque, `selectVar`, `circosPlot` de correlaciones cruzadas, `perf`) y la interpretación crítica del trade-off integración-discriminación.
+:::

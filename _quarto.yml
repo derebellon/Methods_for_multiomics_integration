@@ -43,6 +43,22 @@ website:
       - href: references.qmd
         text: "References"
     right:
+      - text: "Languages"
+        menu:
+          - text: "English (primary)"
+            href: index.qmd
+          - text: "Español"
+            href: translations/es/index.qmd
+          - text: "Français"
+            href: translations/fr/index.qmd
+          - text: "Português"
+            href: translations/pt/index.qmd
+          - text: "العربية"
+            href: translations/ar/index.qmd
+          - text: "中文"
+            href: translations/zh/index.qmd
+          - text: "हिन्दी"
+            href: translations/hi/index.qmd
       - icon: github
         href: https://github.com/derebellon/Methods_for_multiomics_integration
         aria-label: GitHub repository

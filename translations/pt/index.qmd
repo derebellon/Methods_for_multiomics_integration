@@ -1,0 +1,29 @@
+---
+title: "Métodos para integração multi-ômica"
+subtitle: "Tutoriais práticos e reprodutíveis sobre as principais famílias metodológicas"
+lang: pt
+---
+
+# Sobre este site
+
+Este site é o **material suplementar** da revisão metodológica *"A practical review of multi-omics integration methods"* (Rebellon-Sanchez, em preparação) e do Capítulo 1 da tese de doutorado correspondente na London School of Hygiene & Tropical Medicine. A revisão pode ser lida independentemente. Este site existe para o leitor que termina a revisão e se faz a pergunta natural: *"tudo bem, mas como executar isto nos meus próprios dados?"*.
+
+::: {.callout-warning}
+## Nota de tradução
+
+Esta página em português é uma tradução assistida por máquina do conteúdo original em inglês. O autor valida pessoalmente apenas as versões em inglês e espanhol. Para o conteúdo completo e os detalhes técnicos, consulte a [versão em inglês](../../index.qmd). Correções são bem-vindas como pull requests no GitHub.
+:::
+
+## Tutoriais disponíveis
+
+1. **[sPLS-DA](../../02_splsda/splsda.qmd)** — método supervisionado de bloco único. Não é integração multi-ômica em si, mas é a base algorítmica do DIABLO.
+2. **[DIABLO](../../03_diablo/diablo.qmd)** — extensão multi-bloco de sPLS-DA. *A integração multi-ômica começa aqui.*
+3. **[MOFA2](../../04_mofa2/mofa2.qmd)** — análise fatorial bayesiana com verossimilhanças mistas e tolerância a dados ausentes.
+4. **[SNF](../../05_snf/snf.qmd)** — fusão de redes de similaridade entre pacientes.
+5. **[WGCNA](../../06_wgcna/wgcna.qmd)** — módulos de coexpressão a nível de característica.
+6. **[VAE](../../07_vae/vae.qmd)** — integração generativa profunda não linear.
+7. **[Comparação](../../08_comparison/comparison.qmd)** — benchmark entre métodos + resultados em 9 cânceres raros.
+
+## Citação
+
+Consulte o arquivo [`CITATION.cff`](https://github.com/derebellon/Methods_for_multiomics_integration/blob/main/CITATION.cff) do repositório.
