@@ -68,7 +68,8 @@ run_one <- function(cancer) {
   )
 }
 
-cancers <- c("ACC", "KIRP", "KIRC", "LIHC")
+cancers <- c("ACC", "KIRP", "KIRC", "LIHC",
+             "LUAD", "LUSC", "PRAD", "THCA", "THYM")
 res <- do.call(rbind, lapply(cancers, run_one))
 
 cat("\n========== Rare-cancer benchmark ==========\n")

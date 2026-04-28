@@ -267,9 +267,9 @@ clusters?         │                                                ┌─ Nati
                   └─ ≥1,000 samples, suspect non-linearity ──────► VAE
 ```
 
-## Mini-benchmark: SNF across four rare cancers
+## Mini-benchmark: SNF across all nine MLOmics rare cancers
 
-We extended the ACC analysis to three additional rare cancers from MLOmics (KIRP, KIRC, LIHC) using the exact same pipeline (per-block standardisation, Euclidean distance, default SNF hyperparameters, eigengap-recommended cluster count) and validated the resulting clusters against survival.
+We extended the ACC analysis to the eight remaining rare cancers in MLOmics (KIRP, KIRC, LIHC, LUAD, LUSC, PRAD, THCA, THYM) using the exact same pipeline (per-block standardisation, Euclidean distance, default SNF hyperparameters K=20, α=0.5, T=20, eigengap-recommended cluster count) and validated the resulting clusters against survival with a log-rank test.
 
 ```{r}
 #| label: rare-cancer-table
@@ -290,17 +290,19 @@ knitr::kable(
 ::: {.callout-caution}
 ## What the table actually shows — honest reading
 
-Two of the four rare cancers (**ACC** and **KIRC**) yield SNF clusters that strongly stratify survival (log-rank *p* ≈ 0.002 at the eigengap-recommended C). The other two (**KIRP** and **LIHC**) do not (log-rank *p* > 0.5). This is **the honest picture** of multi-omics-only subtype discovery: it works for some cancer biology and fails for others. Several non-exclusive explanations are worth investigating before declaring the method useful or useless:
+Three of the nine rare cancers (**ACC**, **KIRC**, **THYM**) yield SNF clusters that significantly stratify survival at the eigengap-recommended cluster count (log-rank *p* < 0.025). Six of the nine do not (log-rank *p* > 0.15 across all tested *C*). That is a **33% success rate** on a uniform pipeline with no per-cancer hyperparameter tuning — and it is the honest picture of what multi-omics integration alone can recover.
 
-- **Sample size matters but is not destiny.** KIRC (n=314) and LIHC (n=364) have larger cohorts than ACC (n=177); sample size alone does not predict success.
-- **Tumour homogeneity matters.** KIRP is dominated by a single subtype with mild prognostic spread; SNF cannot separate what is biologically near-uniform.
-- **Driver-mutation cohorts confound.** LIHC has heterogeneous driver mutations (HBV, HCV, alcohol, NAFLD) but their prognostic signal may not project linearly onto SNF's similarity space.
+The pattern is biologically intelligible:
 
-The methodological takeaway is that **multi-omics integration alone is necessary but not sufficient for clinically useful subtyping**. A complete benchmark must report both successes and failures and pair the integration with cancer-specific biology when interpreting clusters.
+- **The three successes correspond to cancers with known molecular heterogeneity that maps onto prognosis.** ACC has the cortisol-secreting vs non-secreting axis; KIRC has well-characterised clear-cell variants and chr3p loss patterns; THYM has WHO histological types A / AB / B1 / B2 / B3 that differ in clinical behaviour. The multi-omics signal is strong enough for an unsupervised method to recover.
+- **The six nulls correspond to cancers dominated by a single driver pathway or to cancers where prognostic signal is concentrated in non-omic variables** (TNM stage, age, surgery margins). LUAD and LUSC, for instance, have aggressive prognoses driven by *EGFR*, *KRAS* or *TP53* mutations whose multi-omics signature can be subtle. PRAD survival is largely orthogonal to the dominant transcriptional axes.
+- **Sample size matters but is not destiny.** LUAD (n=450) and PRAD (n=368) are both larger than ACC (n=177) and yet show no signal; THYM (n=119) is the smallest and produces a significant separation.
+
+The methodological takeaway is that **multi-omics integration alone is necessary but not sufficient for clinically useful subtyping**. The 33% hit rate at default hyperparameters argues for **(i)** running multiple integration methods and reporting concordance rather than picking one a priori, **(ii)** pairing multi-omics analysis with classical clinical variables (stage, age, treatment), and **(iii)** treating discovery as hypothesis-generating, with replication in independent cohorts before publication of subtype claims.
 :::
 
 ## What this leaves on the table for future work
 
-The natural extension of this mini-benchmark is the full $9 \times 6$ matrix: nine rare cancers (this chapter covers four; KIRP, KIRC, LIHC and ACC are committed; the script supports the remaining LUAD, LUSC, PRAD, THCA, THYM by passing `--all` to `scripts/download_data.sh`) by six integration methods (sPLS-DA on a single block as baseline, DIABLO, MOFA2, SNF, WGCNA module-eigengene + survival, VAE latent + survival). That benchmark is the natural next step for the corresponding paper.
+We have run the full $9$ rare cancers $\times\ 1$ method (SNF) sweep. The natural extension is the $9 \times 6$ matrix that adds the remaining methods: sPLS-DA on a single block as baseline, DIABLO, MOFA2, WGCNA module-eigengene + survival, VAE latent + survival. For each cancer, the question becomes: *do different integration families agree on the partition?* Methods that disagree on the same data are reporting different facets of the biology, and consensus across methods is a stronger signal than any single method. That is the focus of the corresponding paper.
 
-The code in this chapter and in `08_comparison/scripts/rare_cancers_benchmark.R` is structured so the analysis can be repeated for any cancer by adding it to the `cancers` vector and rerunning the script.
+The reusable script at `08_comparison/scripts/rare_cancers_benchmark.R` accepts any subset of the nine cancers via the `cancers` vector at the top.
