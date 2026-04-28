@@ -1,0 +1,82 @@
+---
+title: "Métodos para la integración multi-ómica"
+subtitle: "Tutoriales prácticos y reproducibles sobre las principales familias metodológicas"
+lang: es
+listing:
+  - id: tutorial-grid
+    contents:
+      - 02_splsda/splsda.qmd
+      - 03_diablo/diablo.qmd
+      - 04_mofa2/mofa2.qmd
+      - 05_snf/snf.qmd
+      - 06_wgcna/wgcna.qmd
+      - 07_vae/vae.qmd
+    type: grid
+    grid-columns: 3
+    fields: [title, subtitle, image]
+    sort: "filename"
+    sort-ui: false
+    filter-ui: false
+---
+
+# Sobre este sitio
+
+Este sitio es el **material suplementario** de la revisión metodológica *"Una revisión práctica de los métodos de integración multi-ómica"* (Rebellon-Sanchez, en preparación) y del Capítulo 1 de la tesis doctoral correspondiente en la London School of Hygiene & Tropical Medicine. La revisión puede leerse de manera independiente. Este sitio existe para quien termina la revisión y se hace la siguiente pregunta, perfectamente razonable: *"de acuerdo, pero ¿cómo corro yo esto sobre mis propios datos?"*.
+
+En lugar de responder con fragmentos de código abstractos, los siete tutoriales aquí presentados ejecutan las principales familias de métodos de integración multi-ómica **de principio a fin sobre un único conjunto de datos público** ([MLOmics GS-BRCA](01_dataset/dataset.qmd) [@yang2025mlomics]), de forma que el lector pueda comparar con sus propios ojos qué hace cada método sobre los mismos pacientes.
+
+::: {.callout-note}
+## A quién están dirigidos estos tutoriales
+
+Estudiantes de doctorado, bioinformáticos, estadísticos e investigadores clínicos con conocimientos básicos de R o Python pero sin experiencia previa en integración multi-ómica. Definimos cada acrónimo, cada métrica y cada output la primera vez que aparece, y llevamos al lector de la mano de una sección a la siguiente en lugar de soltarlo en un bloque de código sin contexto.
+:::
+
+## La plantilla de nueve secciones
+
+Cada tutorial sigue la misma estructura para que puedas navegarlos por encabezado de sección sin tener que reaprender el formato cada vez:
+
+1. **Dónde encaja este método** en el panorama multi-ómico (con una respuesta honesta a *"¿es este método integración por sí mismo o un bloque constructivo?"*).
+2. **El problema biológico** que resuelve, en lenguaje llano.
+3. **Intuición antes de cualquier ecuación**: ¿qué está intentando maximizar o minimizar el algoritmo?
+4. **Formulación matemática** con notación consistente a lo largo del sitio.
+5. **Ejemplo de juguete a mano** sobre un conjunto de datos minúsculo que puedas leer de un vistazo.
+6. **Requisitos de la librería**: formato de datos exacto, orientación de muestras y características, transformaciones esperadas.
+7. **Flujo de trabajo canónico** usando la API documentada por la librería.
+8. **Lectura de los outputs**: cada métrica y figura definida e interpretada críticamente.
+9. **Limitaciones**, antes de que apliques el método a tus propios datos.
+
+## El orden es pedagógico, no por factor de impacto
+
+::: {.callout-tip}
+## Puedes saltar directamente a cualquier tutorial
+
+Cada carpeta del [repositorio de GitHub](https://github.com/derebellon/Methods_for_multiomics_integration) es autocontenida, y la barra lateral te lleva a cualquier tutorial con un clic. El orden de abajo es el *recomendado*, no obligatorio.
+:::
+
+1. **[sPLS-DA](02_splsda/splsda.qmd)**: método supervisado de un solo bloque ómico. **No es integración multi-ómica en sí mismo**, pero es el núcleo algorítmico de DIABLO y el lugar correcto para entender cómo funcionan los modelos de variable latente esparsos antes de añadir la maquinaria multi-bloque.
+2. **[DIABLO](03_diablo/diablo.qmd)**: la extensión multi-bloque de sPLS-DA. *Aquí empieza la integración multi-ómica de verdad.*
+3. **[MOFA2](04_mofa2/mofa2.qmd)**: integración bayesiana de factor latente con verosimilitudes mixtas y tolerancia a datos faltantes.
+4. **[SNF](05_snf/snf.qmd)**: fusión de redes de similitud entre pacientes, la familia basada en redes.
+5. **[WGCNA](06_wgcna/wgcna.qmd)**: integración basada en redes a nivel de característica, centrada en módulos de coexpresión.
+6. **[VAE](07_vae/vae.qmd)**: integración generativa profunda no lineal.
+
+Un [capítulo comparativo final](08_comparison/comparison.qmd) aplica los seis métodos al problema más difícil del descubrimiento de subtipos en los nueve conjuntos de cánceres raros de MLOmics, y reporta concordancia y rendimiento de estratificación de supervivencia.
+
+## Reproducir todo
+
+```{.bash}
+git clone https://github.com/derebellon/Methods_for_multiomics_integration.git
+cd Methods_for_multiomics_integration
+Rscript -e 'renv::restore()'
+quarto render
+```
+
+También necesitas descargar el conjunto de datos una sola vez (~186 MB). Las instrucciones están en el [capítulo del Dataset](01_dataset/dataset.qmd).
+
+## Cómo se construyó este sitio
+
+Los tutoriales y el código de soporte fueron redactados por **David E. Rebellon-Sanchez** en colaboración con **Claude Opus 4.7 de Anthropic**, utilizado como asistente de escritura y de programación a pares, con referencia a la documentación oficial de cada librería. Cada bloque de código sigue la API canónica documentada por los autores originales. La responsabilidad intelectual del contenido recae sobre el autor.
+
+## Citación
+
+Si estos tutoriales te ayudan, por favor cita tanto el artículo subyacente como este repositorio. Detalles en [`CITATION.cff`](https://github.com/derebellon/Methods_for_multiomics_integration/blob/main/CITATION.cff).

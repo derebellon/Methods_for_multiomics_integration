@@ -3,10 +3,12 @@ _site/
 _book/
 _freeze/
 .quarto/
+site_libs/
 *.html
 !index.html
 *.knit.md
 *.utf8.md
+*.rmarkdown
 
 # --- R --------------------------------------------------------------------------
 .Rproj.user/

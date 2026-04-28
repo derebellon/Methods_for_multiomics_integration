@@ -1,0 +1,172 @@
+---
+title: "El conjunto de datos compartido"
+subtitle: "MLOmics GS-BRCA, qué es y qué no es"
+lang: es
+---
+
+# Dataset
+
+Antes de tocar un solo método, fijamos un conjunto de datos. La elección es más consecuente de lo que parece: si cada tutorial usara un dataset diferente, el lector nunca podría distinguir si las diferencias en los resultados provienen de los métodos o de los datos. El propósito mismo de correr estos tutoriales en paralelo desaparecería.
+
+Por eso usamos el mismo dataset en todo el sitio. Este capítulo lo introduce, responde la pregunta obvia *de si se trata de una cohorte completa o un subconjunto*, recorre la estructura de los archivos, señala dos detalles prácticos que de otro modo te darían dolores de cabeza, y muestra la distribución de clases. Una vez leído, los tutoriales asumen que el dataset ya está cargado y pasan directamente al algoritmo.
+
+## Por qué este dataset
+
+Usamos **GS-BRCA**, el subconjunto gold-standard de cáncer de mama de la base de datos **MLOmics** publicada por Yang et al. [@yang2025mlomics] y derivada de The Cancer Genome Atlas (TCGA) [@tcga2012brca].
+
+Tres propiedades lo hacen un dataset de enseñanza inusualmente bueno:
+
+1. **Ya está limpio.** Los autores de MLOmics realizaron la armonización de símbolos génicos, la normalización y el manejo de valores faltantes antes de su publicación. Sin eso, la primera mitad de cada tutorial sería QC.
+2. **Cuatro capas ómicas con naturalezas estadísticas diferentes.** mRNA y miRNA son continuas; la metilación de ADN es continua acotada (valores $\beta$ en $[0,1]$); las variaciones de número de copias son esencialmente enteras / categóricas. Esto fuerza a cada método a enfrentarse a datos heterogéneos, que es el desafío central de la integración multi-ómica en la vida real.
+3. **Un desenlace supervisado claro y biológicamente significativo.** Los subtipos intrínsecos PAM50 [@parker2009pam50] son una de las taxonomías moleculares más establecidas en oncología, usadas clínicamente. Cinco clases (Luminal A, Luminal B, HER2-enriched, Basal-like, Normal-like) con interpretaciones biológicas conocidas nos permiten *validar por sentido biológico* los outputs de cada método contra biología establecida.
+
+## ¿Es un estudio completo o un subconjunto, y se pueden sacar conclusiones reales de él?
+
+Es la pregunta correcta antes de cualquier análisis, así que la respondemos directamente.
+
+::: {.callout-important}
+## Respuesta corta
+
+GS-BRCA es **un subconjunto curado de TCGA-BRCA**, no la cohorte completa original. Es el **subconjunto completo y canónico que utiliza la comunidad de aprendizaje automático multi-ómico**, y es apto para **benchmarking metodológico e interpretación biológica preliminar**, pero las conclusiones derivadas de él deben tratarse como *hipótesis generadoras* en lugar de hallazgos definitivos sobre la biología del cáncer de mama.
+:::
+
+La respuesta larga:
+
+- **Cohorte de origen.** El proyecto original TCGA-BRCA reclutó 1.098 pacientes con carcinoma mamario invasivo en múltiples instituciones estadounidenses, perfilados a través de mRNA, miRNA, metilación, número de copias, mutación, expresión proteica y variables clínicas.
+- **Qué conserva MLOmics.** El dataset "Golden-Standard" BRCA retiene a los **671 pacientes** para los cuales (i) están disponibles las cuatro capas ómicas centrales, y (ii) existe una asignación de subtipo PAM50 en la referencia TCGA. Los pacientes con capas faltantes o subtipos sin asignar se descartan.
+- **Qué implica esto para la inferencia.** Como el criterio de inclusión es la *completitud entre modalidades*, la cohorte resultante no es una muestra aleatoria de pacientes con cáncer de mama en la población; es una muestra de *pacientes a quienes se les recolectaron suficientes datos*. Esto sesga la cohorte hacia tumores más grandes recolectados en centros con mejores recursos, y subrepresenta ligeramente los subtipos raros (HER2 *n* = 42, Normal-like *n* = 31).
+- **Para nuestros fines (tutorial metodológico)** esto está bien: el objetivo es enseñar cómo se comporta cada método dado el mismo input. A los métodos no les importa que la cohorte esté sesgada, solo que el input sea internamente consistente.
+- **Para afirmaciones biológicas genuinamente novedosas** (e.g. *"este gen impulsa la recurrencia de Basal-like"*), un resultado basado solo en MLOmics debería confirmarse en una cohorte independiente antes de publicarse. Los tutoriales tratarán sus hallazgos como *preliminares* a lo largo del sitio por esta razón.
+
+La conclusión: son datos reales sobre pacientes reales con subtipos reales, lo bastante grandes como para que los métodos produzcan resultados estables e interpretables, y lo bastante pequeños como para que todo en este tutorial corra en una laptop. Ese es el balance correcto para enseñar.
+
+## Dónde obtener los datos
+
+Los archivos usados aquí provienen del mirror de Hugging Face del repositorio MLOmics. Viven bajo `Main_Dataset/Classification_datasets/GS-BRCA/Top/`. La escala "Top" conserva los genes más variables (seleccionados por ANOVA entre tipos de cáncer) y produce matrices manejables para fines de tutorial.
+
+**Recomendamos descarga directa con `curl`** en lugar de `git clone` del archivo MLOmics completo, por tres razones:
+
+::: {.callout-tip}
+## ¿Descarga directa o `git clone`?
+
+- **`curl` (recomendado).** Solo necesitas cinco archivos (el subconjunto de características "Top" de GS-BRCA). La descarga directa trae solo esos.
+- **`git clone https://huggingface.co/datasets/AIBIC/MLOmics`.** Trae el archivo completo (~3 GB, los 32 cánceres, las tres escalas de características) y requiere `git-lfs` instalado. Útil solo si planeas extender los tutoriales a otros tipos de cáncer; en ese caso el ancho de banda está bien gastado una vez.
+
+Si tienes dudas, usa `curl`.
+:::
+
+```bash
+mkdir -p data/raw/GS-BRCA/Top
+BASE="https://huggingface.co/datasets/AIBIC/MLOmics/resolve/main/Main_Dataset/Classification_datasets/GS-BRCA/Top"
+for f in BRCA_label_num.csv BRCA_miRNA_top.csv BRCA_mRNA_top.csv \
+         BRCA_Methy_top.csv BRCA_CNV_top.csv; do
+  curl -fL -o "data/raw/GS-BRCA/Top/$f" "$BASE/$f"
+done
+```
+
+Deberías terminar con estos cinco archivos (~186 MB en total):
+
+| Archivo                  | Propósito                              | Tamaño   |
+|--------------------------|-----------------------------------------|----------|
+| `BRCA_mRNA_top.csv`      | Expresión de mRNA (top 5.000 genes)    | 59 MB    |
+| `BRCA_miRNA_top.csv`     | Expresión de miRNA (366 características)| 1,8 MB   |
+| `BRCA_Methy_top.csv`     | Valores $\beta$ de metilación de ADN   | 59 MB    |
+| `BRCA_CNV_top.csv`       | Número de copias a nivel de gen         | 59 MB    |
+| `BRCA_label_num.csv`     | Etiquetas numéricas de subtipo          | 1,4 KB   |
+
+Las etiquetas numéricas se mapean a los nombres PAM50 a través del archivo `GS-Subtype labels.xlsx` en el repositorio de GitHub de MLOmics. Para BRCA:
+
+| Etiqueta numérica | Subtipo PAM50 |
+|:-----------------:|---------------|
+| 0                 | LumA          |
+| 1                 | Her2          |
+| 2                 | LumB          |
+| 3                 | Normal        |
+| 4                 | Basal         |
+
+Nuestro loader aplica este mapeo automáticamente y devuelve un factor con niveles nombrados, así que no necesitas recordar los números en tu código posterior.
+
+## Dos detalles prácticos que de otro modo te darían dolor de cabeza
+
+Los mencionamos aquí, una vez, para que los tutoriales de cada método no tengan que repetirlos:
+
+::: {.callout-warning}
+## La orientación importa
+
+MLOmics envía cada CSV ómico con **características en filas y muestras en columnas**. La primera columna contiene los nombres de las características; la fila de cabecera contiene los códigos de barras de TCGA. La mayoría de los paquetes de aprendizaje automático en R, incluidos `mixOmics` y `MOFA2`, esperan lo opuesto: **muestras en filas, características en columnas**. El helper `load_mlomics_brca()` en `R/load_mlomics.R` se encarga de la transposición, alinea los IDs de muestra entre las cuatro ómicas y devuelve matrices listas para usar.
+:::
+
+::: {.callout-warning}
+## Nombres de miRNA faltantes
+
+El archivo de miRNA llega con 166 de sus 366 características con un campo de nombre vacío, un artefacto del pipeline de procesamiento de MLOmics. No los descartamos silenciosamente, porque pueden cargar señal. En su lugar, el loader les asigna nombres sintéticos (`unnamed_1`, `unnamed_2`, ...) y deduplica el resto con `make.unique()`. Si tu método posterior requiere anotación de símbolos génicos (e.g. enriquecimiento de pathways), pre-filtra a los miRNA nombrados.
+:::
+
+## Cargar los datos
+
+Con los dos detalles manejados por el helper, la carga es una sola línea. Repetiremos este patrón al inicio de cada tutorial subsiguiente.
+
+```{r}
+#| label: load-data
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+```
+
+Después de cargar, `brca` es una lista con las cuatro matrices ómicas, el factor de subtipo y los IDs de muestra:
+
+```{r}
+#| label: data-overview
+sapply(brca[c("mRNA", "miRNA", "methylation", "cnv")], dim)
+```
+
+```{r}
+#| label: dim-table
+n  <- nrow(brca$mRNA)
+p  <- sapply(brca[c("mRNA","miRNA","methylation","cnv")], ncol)
+
+knitr::kable(
+  data.frame(
+    Capa         = c("mRNA","miRNA","Metilación","CNV"),
+    Características = p,
+    Muestras     = n
+  ),
+  caption = "Dimensiones de GS-BRCA después de transponer a muestras-en-filas."
+)
+```
+
+Tenemos por tanto **671 pacientes** con las cuatro ómicas medidas, **5.000 características por capa** para mRNA / metilación / CNV y **366 para miRNA**. Para estándares ómicos esto es genuinamente *pequeño*, lo cual es parte de lo que lo hace tratable como dataset de tutorial.
+
+## Distribución de clases
+
+La distribución PAM50 luce así:
+
+```{r}
+#| label: class-distribution
+#| fig-cap: "Distribución de subtipos PAM50 en GS-BRCA. Luminal A domina, como se espera para una cohorte poblacional de cáncer de mama. El desbalance tiene consecuencias metodológicas (CV estratificada, BER) señaladas más abajo."
+library(ggplot2)
+
+ggplot(data.frame(Subtipo = brca$labels), aes(Subtipo, fill = Subtipo)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.3) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = "Número de pacientes")
+```
+
+El desbalance de clases es biológicamente real (Luminal A es el subtipo más común en la población) pero tiene consecuencias metodológicas:
+
+- Cualquier esquema de validación cruzada usado posteriormente **debe estratificar por subtipo**, de lo contrario las clases pequeñas pueden quedar completamente ausentes en algún fold.
+- La precisión sobre las clases raras (Normal-like *n* = 31, HER2 *n* = 42) es una prueba más estricta que la precisión global. Usaremos la **tasa de error balanceada** (BER) en lugar de precisión a lo largo de todo el sitio, y reportaremos el error por clase siempre que el método lo permita.
+
+Cada tutorial de método señala cómo maneja este desbalance.
+
+## Lo que deliberadamente *no* hacemos
+
+Para mantener los tutoriales enfocados en la metodología de integración, omitimos deliberadamente varios pasos que un estudio traslacional real incluiría. Declararlos aquí una sola vez nos ahorra repetir el descargo en cada capítulo:
+
+- **Sin nueva selección de características.** La versión "Top" ya elimina la mayoría de las características no informativas; reajustar la selección aquí inflaría el rendimiento aparente.
+- **Sin corrección de batch.** El pipeline de MLOmics realiza corrección de batch corriente arriba. Con tus propios datos necesitarías revisitarlo.
+- **Sin partición externa train / test a nivel de paciente.** Los subtipos PAM50 son biología bien conocida, así que el objetivo es *enseñar* el método más que competir en un benchmark. Cuando se necesita una partición train / test para estimaciones honestas de rendimiento, cada tutorial la introduce localmente con validación cruzada.
+
+Con el dataset listo y estos descargos declarados, podemos pasar al primer método.
