@@ -267,8 +267,40 @@ clusters?         │                                                ┌─ Nati
                   └─ ≥1,000 samples, suspect non-linearity ──────► VAE
 ```
 
+## Mini-benchmark: SNF across four rare cancers
+
+We extended the ACC analysis to three additional rare cancers from MLOmics (KIRP, KIRC, LIHC) using the exact same pipeline (per-block standardisation, Euclidean distance, default SNF hyperparameters, eigengap-recommended cluster count) and validated the resulting clusters against survival.
+
+```{r}
+#| label: rare-cancer-table
+#| echo: false
+res <- read.csv("08_comparison/scripts/rare_cancer_results.csv",
+                stringsAsFactors = FALSE)
+# Keep numeric formatting compact
+for (col in c("C2_p","C3_p","C4_p")) {
+  res[[col]] <- formatC(res[[col]], format = "f", digits = 4)
+}
+knitr::kable(
+  res[, c("cancer","n","eigengap_C","C2_p","C3_p","C4_p")],
+  col.names = c("Cancer","n","Eigengap C","p (C=2)","p (C=3)","p (C=4)"),
+  caption = "Cross-rare-cancer SNF benchmark. Each row is one TCGA rare-cancer cohort with full multi-omics + survival annotation. The eigengap column is the cluster count recommended by the spectral-clustering heuristic; the p-columns are log-rank p-values for the Kaplan-Meier survival curves of the SNF clusters at C = 2, 3 and 4."
+)
+```
+
+::: {.callout-caution}
+## What the table actually shows — honest reading
+
+Two of the four rare cancers (**ACC** and **KIRC**) yield SNF clusters that strongly stratify survival (log-rank *p* ≈ 0.002 at the eigengap-recommended C). The other two (**KIRP** and **LIHC**) do not (log-rank *p* > 0.5). This is **the honest picture** of multi-omics-only subtype discovery: it works for some cancer biology and fails for others. Several non-exclusive explanations are worth investigating before declaring the method useful or useless:
+
+- **Sample size matters but is not destiny.** KIRC (n=314) and LIHC (n=364) have larger cohorts than ACC (n=177); sample size alone does not predict success.
+- **Tumour homogeneity matters.** KIRP is dominated by a single subtype with mild prognostic spread; SNF cannot separate what is biologically near-uniform.
+- **Driver-mutation cohorts confound.** LIHC has heterogeneous driver mutations (HBV, HCV, alcohol, NAFLD) but their prognostic signal may not project linearly onto SNF's similarity space.
+
+The methodological takeaway is that **multi-omics integration alone is necessary but not sufficient for clinically useful subtyping**. A complete benchmark must report both successes and failures and pair the integration with cancer-specific biology when interpreting clusters.
+:::
+
 ## What this leaves on the table for future work
 
-We have demonstrated the workflow on one rare cancer (ACC) for one method (SNF). Extending the same pipeline to the **eight remaining rare cancers in MLOmics** (KIRP, KIRC, LIHC, LUAD, LUSC, PRAD, THCA, THYM) and to **all six methods** would produce a 9 × 6 matrix of cluster-vs-survival p-values: a rigorous, reproducible benchmark of which integration family delivers the most prognostically informative subtypes in low-sample-size oncology. That benchmark is the natural next step for the corresponding paper.
+The natural extension of this mini-benchmark is the full $9 \times 6$ matrix: nine rare cancers (this chapter covers four; KIRP, KIRC, LIHC and ACC are committed; the script supports the remaining LUAD, LUSC, PRAD, THCA, THYM by passing `--all` to `scripts/download_data.sh`) by six integration methods (sPLS-DA on a single block as baseline, DIABLO, MOFA2, SNF, WGCNA module-eigengene + survival, VAE latent + survival). That benchmark is the natural next step for the corresponding paper.
 
-The code in this chapter is structured so that the analysis can be repeated by changing one variable — the `acc_dir` path — and rerunning the chunks.
+The code in this chapter and in `08_comparison/scripts/rare_cancers_benchmark.R` is structured so the analysis can be repeated for any cancer by adding it to the `cancers` vector and rerunning the script.

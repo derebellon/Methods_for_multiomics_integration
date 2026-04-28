@@ -50,6 +50,8 @@ data/
 *.parquet
 *.feather
 !references.bib
+# Tiny analysis-result CSVs produced by tutorial scripts ARE committed.
+!08_comparison/scripts/*.csv
 
 # --- Secrets and local environment (NEVER commit) ------------------------------
 .env
