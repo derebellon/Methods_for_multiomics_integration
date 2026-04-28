@@ -1,0 +1,213 @@
+---
+title: "Tutorial 4 — Similarity Network Fusion"
+subtitle: "Network-based unsupervised integration via patient similarity"
+image: ../assets/thumb_snf.png
+---
+
+# Similarity Network Fusion (SNF)
+
+## Where this method fits in the multi-omics landscape
+
+SNF [@wang2014snf] is the canonical *patient-similarity network* method for multi-omics integration. It is **unsupervised**, **non-parametric**, and operates entirely on the **sample × sample** level — never on the feature level. This makes it fundamentally different from sPLS-DA, DIABLO and MOFA2, which all decompose data at the feature level.
+
+| Property             | DIABLO              | MOFA2                 | **SNF**                            |
+|----------------------|---------------------|-----------------------|-------------------------------------|
+| Output unit          | Feature loadings    | Factor loadings       | **Patient similarity matrix**      |
+| Supervised?          | Yes                 | No                    | **No**                              |
+| Feature ranking?     | Yes                 | Yes                   | **No** (post hoc only)              |
+| Computational cost   | $O(n p)$            | $O(n p K)$            | **$O(n^2 M)$** (cheap when $n \ll p$)|
+| Best at              | Biomarker discovery | Latent factor discovery | **Subtype discovery, clustering**  |
+
+Use SNF when **patient stratification** is the primary goal (e.g. discovering disease subtypes, recommending treatment groups) and when the per-feature drivers are a secondary concern.
+
+## The biological problem we are solving here
+
+Same 671 patients. We ask the data:
+
+1. **If we measure how similar each pair of patients is in each omic separately, can we combine those four similarity views into one consensus measure of "biological likeness" between patients?**
+2. **If we then cluster patients on that consensus similarity, do the clusters recover PAM50?**
+
+SNF answers both. It does not tell you *which features* drive the similarity — for that you go back to DIABLO or MOFA2. But for cluster discovery it is unusually robust to noise and naturally handles different omics types.
+
+## Intuition before any equation
+
+The procedure has three steps that you can picture without algebra:
+
+1. **One similarity network per block.** For each omic, build a graph in which every patient is a node and the edge weight between two patients is high if they look alike in *that* omic.
+2. **Iterative cross-talk.** Update each network using information from the others: an edge in the mRNA network becomes stronger if the same patients are also linked in the methylation network. Run a few rounds of this message-passing.
+3. **Average and cluster.** The networks converge to a single fused similarity. Apply spectral clustering on that fused matrix to obtain patient groups.
+
+The clever part is step 2: the iterative update *amplifies* edges that appear consistently across modalities and *attenuates* noisy edges that appear in only one. The fused network has higher signal-to-noise than any of the input networks.
+
+## Mathematical formulation
+
+For each view $m$, build the patient distance matrix $D^{(m)}$ and convert it to an affinity matrix $W^{(m)} \in \mathbb{R}^{n \times n}$ via a scaled Gaussian kernel restricted to $K$ nearest neighbours.
+
+For each $W^{(m)}$, define a "global" normalised matrix $P^{(m)}$ and a "local" matrix $S^{(m)}$ keeping only the top-$K$ neighbours per row. SNF iterates [@wang2014snf]:
+
+$$
+P^{(m)}_{(t+1)} = S^{(m)} \times \left( \frac{1}{M-1} \sum_{k \neq m} P^{(k)}_{(t)} \right) \times (S^{(m)})^\top
+$$
+
+After $T$ iterations the $M$ matrices converge to a single fused similarity $\bar P$. Spectral clustering on $\bar P$ produces patient groups.
+
+Three hyperparameters: $K$ (neighbourhood size, default 20), $\alpha$ (Gaussian kernel scale, default 0.5), and $T$ (iterations, default 20). The defaults work well in practice.
+
+## What `SNFtool` expects from us
+
+| Step             | Function          | Input                            | Output                          |
+|------------------|-------------------|----------------------------------|---------------------------------|
+| Standardisation  | `standardNormalization()` | matrix samples × features | standardised matrix             |
+| Pairwise distance| `dist2(X, X)`     | standardised matrix              | $n \times n$ squared-distance   |
+| Affinity matrix  | `affinityMatrix(D, K, alpha)` | distance matrix          | $n \times n$ similarity matrix  |
+| Fusion           | `SNF(W_list, K, T)`| list of similarity matrices     | fused $n \times n$ matrix       |
+| Clustering       | `spectralClustering(W, C)` | fused matrix + cluster count | cluster vector of length $n$    |
+
+::: {.callout-warning}
+## Distance, then square root
+
+`dist2()` returns *squared* Euclidean distance. The original SNF paper uses Euclidean distance, so we apply `^(1/2)` before passing to `affinityMatrix()`. This is a frequent mistake worth flagging.
+:::
+
+## Canonical workflow on GS-BRCA
+
+### Step 1 — Load, standardise, build per-block affinity matrices
+
+```{r}
+#| label: load-affinity
+#| message: false
+suppressPackageStartupMessages({
+  library(SNFtool)
+  library(aricode)
+  library(ggplot2)
+})
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+
+K       <- 20      # nearest neighbours
+alpha   <- 0.5     # Gaussian kernel scale
+T_iter  <- 20      # iterations
+
+build_W <- function(X) {
+  Xs <- standardNormalization(X)
+  D  <- (dist2(Xs, Xs))^(1/2)
+  affinityMatrix(D, K = K, sigma = alpha)
+}
+
+W_mRNA <- build_W(brca$mRNA)
+W_miRNA <- build_W(brca$miRNA)
+W_meth <- build_W(brca$methylation)
+W_cnv  <- build_W(brca$cnv)
+
+dim(W_mRNA)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+Each affinity matrix is $n \times n = 671 \times 671$. Cell $(i,j)$ is the similarity between patient $i$ and patient $j$ in that omic. The matrix is symmetric, with 1 on the diagonal (patients are most similar to themselves).
+:::
+
+### Step 2 — Fuse the four affinity matrices
+
+```{r}
+#| label: snf
+#| cache: true
+W_fused <- SNF(list(W_mRNA, W_miRNA, W_meth, W_cnv), K = K, t = T_iter)
+dim(W_fused)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+Same dimensions as the inputs ($671 \times 671$), but cell values are now the *consensus* similarity after $T = 20$ rounds of cross-network message passing. Edges that survive the iterations are supported by multiple modalities; edges that appeared in only one block are attenuated.
+:::
+
+### Step 3 — Spectral clustering with $C = 5$ (matching PAM50)
+
+```{r}
+#| label: cluster
+C <- 5    # we ask for 5 clusters because PAM50 has 5 subtypes
+clusters <- spectralClustering(W_fused, C)
+table(clusters)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+Number of patients assigned to each of the 5 SNF clusters. Cluster *labels* are arbitrary integers (cluster 1 in this run is not the same as cluster 1 in another run); the partition itself is what matters.
+:::
+
+### Step 4 — Compare SNF clusters with PAM50
+
+```{r}
+#| label: agreement
+nmi <- aricode::NMI(clusters, brca$labels)
+ari <- aricode::ARI(clusters, brca$labels)
+cm  <- table(SNF = clusters, PAM50 = brca$labels)
+list(NMI = nmi, ARI = ari, contingency = cm)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+- **NMI (Normalized Mutual Information).** A value in $[0, 1]$ that measures how much knowing the SNF cluster reduces uncertainty about the PAM50 label. NMI = 1 means perfect agreement (up to label permutation); NMI = 0 means independence.
+- **ARI (Adjusted Rand Index).** Measures the fraction of patient pairs that are clustered consistently between SNF and PAM50, adjusted for chance. ARI = 1 means perfect agreement; ARI ≈ 0 means random agreement; ARI < 0 means worse than random.
+- **Contingency table.** Each row is an SNF cluster; each column is a PAM50 subtype. Read across rows: an SNF cluster dominated by one column is a *pure* cluster; a row split across columns indicates that the SNF cluster is a *mixture* of PAM50 subtypes (or that PAM50 is mis-stratifying these patients).
+
+For a published analysis NMI > 0.5 is good; NMI > 0.7 is excellent on this kind of data.
+:::
+
+### Step 5 — Visualise the fused similarity heatmap
+
+```{r}
+#| label: heatmap
+#| fig-cap: "Heatmap of the fused similarity matrix, with rows/columns ordered by spectral cluster and annotated by PAM50. Block-diagonal structure indicates that patients group consistently."
+order_idx <- order(clusters)
+W_ord <- W_fused[order_idx, order_idx]
+pam50_ord <- brca$labels[order_idx]
+
+# Truncate extreme values for visualisation
+W_ord_t <- pmin(W_ord, quantile(W_ord, 0.99))
+
+heatmap(
+  as.matrix(W_ord_t),
+  Rowv = NA, Colv = NA,
+  scale = "none",
+  col = hcl.colors(50, "YlOrRd", rev = TRUE),
+  RowSideColors = RColorBrewer::brewer.pal(5, "Set2")[as.integer(pam50_ord)],
+  labRow = NA, labCol = NA,
+  main = "Fused patient similarity (rows ordered by SNF cluster)"
+)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Block-diagonal "checkerboard" structure means the fused similarity has clearly separated patient groups. The colour bar on the side encodes PAM50 subtype: if the SNF blocks are *also* monochromatic in the PAM50 colour bar, the unsupervised clustering recovered the supervised labelling. Mixed colour bars within a block flag SNF clusters that group patients across PAM50 boundaries — interesting biology to follow up.
+:::
+
+## Critical interpretation
+
+The headline question is whether SNF, given no labels, recovered the PAM50 partition.
+
+::: {.callout-caution}
+## What the numbers should say
+
+- **NMI ≈ 0.4–0.6** is typical for SNF on TCGA-BRCA: it recovers the broad luminal-vs-basal split (the dominant signal) but mis-classifies HER2 and Normal-like, which require finer resolution. This is consistent with what sPLS-DA found on a single component.
+- **NMI > 0.7** would indicate a clearer recovery and would be a positive finding for the method's discriminative power.
+- **A contingency table** in which one SNF cluster splits LumA into two roughly equal halves is *not* an SNF failure: it may be revealing biologically meaningful sub-structure within LumA (e.g. LumA-immune-high vs LumA-immune-low). Cross-checking with survival or with immune-deconvolution scores is the natural follow-up.
+:::
+
+## Limitations
+
+- **No feature-level interpretation.** SNF tells you which patients group together, not why. To recover features, run DIABLO or MOFA2 *after* defining the SNF clusters and use the cluster as the outcome variable.
+- **Sensitive to the number of clusters $C$.** Misspecifying $C$ produces clean-looking but biologically meaningless partitions. Use the eigengap heuristic (`estimateNumberOfClustersGivenGraph` in `SNFtool`) when $C$ is not known a priori.
+- **Treats all blocks equally.** No weighting; if one block is much noisier than others, it will pollute the fusion. Pre-filter aggressively when block quality varies.
+- **Distance metric matters.** Default Euclidean distance assumes continuous, comparable features; for categorical CNV calls or sparse compositional data, a tailored distance is preferable.
+
+## What this leaves on the table
+
+SNF gives us patient stratification but no feature-level story. The next chapter, **WGCNA**, is the symmetric opposite: a network method that builds *feature × feature* networks and reports modules of co-varying features, but does not stratify patients directly.
+
+In the [next chapter](../06_wgcna/wgcna.qmd) we keep the same dataset and switch to **WGCNA** for module-level multi-omics integration.

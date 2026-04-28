@@ -1,0 +1,437 @@
+---
+title: "Tutorial 2 — DIABLO"
+subtitle: "Sparse latent-variable integration of four omics blocks"
+image: ../assets/thumb_diablo.png
+---
+
+# DIABLO
+
+## Where this method fits in the multi-omics landscape
+
+This is the first chapter that performs **genuine multi-omics integration**. We feed four omics blocks (mRNA, miRNA, DNA methylation, copy-number) into a single model and ask it to find latent components that simultaneously discriminate PAM50 subtypes *and* are correlated across blocks.
+
+DIABLO (Data Integration Analysis for Biomarker discovery using Latent components) [@singh2019diablo] sits at the *supervised, sparse, linear, multi-block* corner of the methodological landscape. In the Bai\~ao et al. (2025) taxonomy it belongs to the *correlation/covariance-based* family. It is the multi-block extension of the [sPLS-DA tutorial](../02_splsda/splsda.qmd) you just read; everything you learnt about `keepX`, loadings and `plotIndiv()` carries over.
+
+If you want to compare it conceptually with the rest of the tutorials:
+
+| Property                | sPLS-DA (1)   | **DIABLO (2)**         | MOFA2 (3)              | SNF (4)         | WGCNA (5)        | VAE (6)            |
+|-------------------------|---------------|------------------------|------------------------|-----------------|------------------|--------------------|
+| Multi-block?            | No            | **Yes**                | Yes                    | Yes             | Adapted          | Yes                |
+| Supervised?             | Yes           | **Yes**                | No (unsupervised)      | No              | No               | Optional           |
+| Linear?                 | Yes           | **Yes**                | Yes (per view)         | Yes             | Yes (correlation)| No                 |
+| Handles missing data?   | No            | **No**                 | Yes (marginalisation)  | Partially       | No               | Yes (via training) |
+| Outputs feature list?   | Yes           | **Yes (per block)**    | Yes (factor loadings)  | No              | Yes (modules)    | Indirect (SHAP)    |
+
+DIABLO is the right first stop if your goal is to find a **short, interpretable, multi-omic biomarker signature for a known clinical outcome**. It is not the right tool for unsupervised subtype discovery (see SNF and MOFA2) or for non-linear pattern discovery (VAE).
+
+## The biological problem we are solving here
+
+The colleague from the previous chapter is back with the same 671 patients, but this time she has handed us four matrices instead of one: mRNA, miRNA, DNA methylation, and copy-number variation. She asks us a sharper question:
+
+1. **Is there a multi-omic signature** — a small set of mRNAs, miRNAs, methylated CpGs and amplified regions — **that, taken together, discriminates the five PAM50 subtypes better than mRNA alone?**
+2. **Are the molecules in that signature correlated across blocks?** That is, do the mRNAs that mark Basal-like also correspond to the methylation marks that mark Basal-like, or are these orthogonal stories?
+
+DIABLO is built to answer both at once: it produces a per-block list of selected features *and* a quantitative report of how much each block contributes to each component, including the cross-block correlations.
+
+## Intuition before any equation
+
+Picture the same 671 patients now sitting in *four* high-dimensional spaces simultaneously: one space per omic. sPLS-DA would build a discriminative axis in each space independently. DIABLO does something subtler: it builds **one axis per block per component**, but it *constrains* those axes so that the patient scores on the four block-axes of the same component are correlated with each other.
+
+Concretely, on the first DIABLO component, we get four weight vectors $w^{(1)}_{\text{mRNA}}, w^{(1)}_{\text{miRNA}}, w^{(1)}_{\text{meth}}, w^{(1)}_{\text{CNV}}$. The patient's score on the mRNA-axis is $X_{\text{mRNA}} w^{(1)}_{\text{mRNA}}$; on the miRNA-axis $X_{\text{miRNA}} w^{(1)}_{\text{miRNA}}$; and so on. DIABLO chooses the $w$ vectors so that:
+
+- All four scores discriminate the PAM50 subtypes (the supervised constraint, just like sPLS-DA).
+- Patients with high mRNA score on this component tend to also have high miRNA score, high methylation score and high CNV score (the integration constraint).
+
+The strength of the integration constraint is encoded in a **design matrix** $D$ that you provide. If $D = 0$ (off-diagonal), DIABLO reduces to running four independent sPLS-DA models. If $D = 1$ (off-diagonal), it forces maximum cross-block agreement, sometimes at the expense of per-block discrimination. The default $D = 0.1$ is a calibrated compromise recommended by the package authors.
+
+The L1 sparsity penalty applies independently per block: `keepX` is now a *list* with one entry per block, telling the model how many features to keep on each component, in each block.
+
+## Mathematical formulation
+
+Let $X^{(m)} \in \mathbb{R}^{n \times p_m}$ be the matrix for omic block $m \in \{1, \ldots, M\}$ ($M = 4$ here), centred and scaled per feature. Let $Y \in \{0,1\}^{n \times K}$ be the one-hot subtype matrix, treated as a fifth block.
+
+DIABLO solves [@singh2019diablo; @tenenhaus2014rgcca]:
+
+$$
+\max_{w^{(m)}}\; \sum_{m \neq m'} d_{m,m'}\,\mathrm{Cov}\!\left(X^{(m)} w^{(m)},\;X^{(m')} w^{(m')}\right)
+\quad \text{s.t.} \quad \|w^{(m)}\|_2 = 1,\; \|w^{(m)}\|_1 \leq \lambda_m
+$$
+
+where $d_{m,m'}$ is the $(m, m')$ entry of the design matrix $D$. The L2 constraints normalise the weights; the L1 constraints enforce sparsity, with `keepX` again the convenient parameterisation in `mixOmics`.
+
+Successive components are extracted from the residual matrices, just like in sPLS-DA.
+
+## Toy example by hand
+
+We replicate the toy from the previous chapter but with **two blocks** instead of one, and we compare an integrated DIABLO fit (design = 1, maximum integration) against a non-integrated fit (design = 0, equivalent to two independent sPLS-DAs). The expectation: with design = 1 the algorithm finds a *common* axis driven by feature 1 in both blocks; with design = 0 each block is free to pick whichever feature maximises its own discrimination.
+
+```{r}
+#| label: toy-data
+set.seed(1)
+toy_X1 <- rbind(
+  c( 2.1,  0.8,  0.2,  0.3),
+  c( 1.8,  1.1,  0.9, -0.4),
+  c( 2.0,  1.2,  0.1, -0.1),
+  c(-1.9, -1.0,  0.0,  0.5),
+  c(-2.0, -0.9,  0.2, -0.2)
+)
+toy_X2 <- rbind(
+  c( 1.7,  0.3, -0.1,  0.4),
+  c( 1.5,  0.5,  0.6, -0.3),
+  c( 1.8,  0.4, -0.2,  0.0),
+  c(-1.6, -0.4,  0.1,  0.6),
+  c(-1.9, -0.5,  0.3, -0.1)
+)
+colnames(toy_X1) <- paste0("X1_f", 1:4)
+colnames(toy_X2) <- paste0("X2_f", 1:4)
+rownames(toy_X1) <- rownames(toy_X2) <- paste0("p", 1:5)
+toy_Y <- factor(c("A","A","A","B","B"))
+toy_blocks <- list(blockA = toy_X1, blockB = toy_X2)
+```
+
+Now we fit two DIABLO models with different design matrices:
+
+```{r}
+#| label: toy-fit
+suppressPackageStartupMessages(library(mixOmics))
+
+# Design 1: maximum cross-block integration
+design_full <- matrix(1, 2, 2); diag(design_full) <- 0
+
+# Design 0: independent blocks (equivalent to per-block sPLS-DA)
+design_none <- matrix(0, 2, 2)
+
+fit_int <- block.splsda(X = toy_blocks, Y = toy_Y, ncomp = 1,
+                        keepX = list(blockA = 1, blockB = 1),
+                        design = design_full)
+
+fit_ind <- block.splsda(X = toy_blocks, Y = toy_Y, ncomp = 1,
+                        keepX = list(blockA = 1, blockB = 1),
+                        design = design_none)
+
+list(integrated = lapply(fit_int$loadings, function(L) L[, 1]),
+     independent = lapply(fit_ind$loadings, function(L) L[, 1]))
+```
+
+::: {.callout-tip}
+## How to read this output
+
+Each named list contains the loading vectors for the two blocks on the first component. We asked `keepX = 1` per block, so only one feature gets a non-zero loading; the rest are exactly zero.
+
+Both designs select feature 1 in each block (the strong-signal feature). The toy is too easy to distinguish the two designs visually — the point of running it is to confirm that the two-block API works the way the single-block API did.
+:::
+
+## What `mixOmics::block.splsda()` expects from us
+
+The data contract changes in three important ways from sPLS-DA:
+
+| Input    | Required form                                                                          |
+|----------|----------------------------------------------------------------------------------------|
+| `X`      | A **named list of matrices**, all with the same number of rows (patients), in the same patient order. Different blocks can have different numbers of features. No `NA`. |
+| `Y`      | A factor of length `nrow(X[[1]])`, just like sPLS-DA.                                  |
+| `ncomp`  | Integer. The same number of components is computed for every block.                    |
+| `keepX`  | A **named list** of integer vectors, one per block. Each vector has length `ncomp`.   |
+| `design` | An $M \times M$ symmetric matrix with values in $[0, 1]$ and zeros on the diagonal. Controls cross-block integration strength. |
+
+::: {.callout-warning}
+## Sample alignment is on you
+
+`block.splsda()` does **not** verify that the rows of the four blocks correspond to the same patients in the same order. It happily fits a model on misaligned data and returns nonsense. Our `load_mlomics_brca()` helper aligns the four blocks for us; if you bring your own data, run `identical(rownames(X1), rownames(X2))` before calling DIABLO.
+:::
+
+::: {.callout-note}
+## Choosing the design matrix
+
+The Singh et al. (2019) paper offers three default designs:
+
+- **Null design** ($D_{m,m'} = 0$): no integration; equivalent to per-block sPLS-DA.
+- **Weighted design** ($D_{m,m'} = 0.1$): the package default. Modest cross-block constraint; tends to give the best classification accuracy.
+- **Full design** ($D_{m,m'} = 1$): maximum integration; emphasises features whose signal is consistent across blocks at the cost of some classification accuracy.
+
+For most exploratory analyses, start with `D = 0.1` (weighted) and only switch if you have a specific reason. We use it below.
+:::
+
+## Canonical workflow on GS-BRCA (4 blocks)
+
+The seven-step workflow is the same as for sPLS-DA, with the data preparation step doing slightly more work because we now juggle four blocks.
+
+### Step 1 — Load the data and assemble the block list
+
+```{r}
+#| label: load
+#| message: false
+suppressPackageStartupMessages({
+  library(mixOmics)
+  library(ggplot2)
+})
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+
+X <- list(
+  mRNA        = brca$mRNA,
+  miRNA       = brca$miRNA,
+  methylation = brca$methylation,
+  CNV         = brca$cnv
+)
+Y <- brca$labels
+
+sapply(X, dim); table(Y)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+Four blocks, all with 671 rows (the same 671 patients in the same order, by construction of the loader). Feature counts vary as expected: 5,000 for mRNA, methylation and CNV; 366 for miRNA. The `table(Y)` confirms the same imbalanced 5-class distribution we saw in the [Dataset chapter](../01_dataset/dataset.qmd).
+:::
+
+### Step 2 — Choose the design matrix
+
+```{r}
+#| label: design
+M <- length(X)
+design <- matrix(0.1, nrow = M, ncol = M, dimnames = list(names(X), names(X)))
+diag(design) <- 0
+design
+```
+
+::: {.callout-tip}
+## How to read this output
+
+Symmetric 4 × 4 matrix with `0.1` everywhere off-diagonal and `0` on the diagonal. We use the package-default weighted design [@singh2019diablo].
+:::
+
+### Step 3 — Fit a baseline model with arbitrary `keepX`
+
+```{r}
+#| label: baseline-fit
+fit0 <- block.splsda(
+  X = X, Y = Y,
+  ncomp = 2,
+  keepX = list(mRNA = c(20, 20), miRNA = c(20, 20),
+               methylation = c(20, 20), CNV = c(20, 20)),
+  design = design
+)
+fit0
+```
+
+::: {.callout-tip}
+## How to read this output
+
+The print summary lists, per block, how many features were retained per component (20 each, as we asked) and confirms our design choice. We will not interpret this fit; it is scaffolding for the real one.
+:::
+
+### Step 4 — Tune `keepX` per block with cross-validation
+
+`tune.block.splsda()` extends `tune.splsda()` to multiple blocks. Tuning over many blocks and several `keepX` values can be slow, so we keep the grid small for tutorial purposes (three values per block) and `nrepeat = 1` (one replicate). For paper-quality numbers, raise `nrepeat` to 5 or more.
+
+```{r}
+#| label: tune
+#| cache: true
+set.seed(42)
+
+test_keepX <- list(
+  mRNA        = c(10, 25, 50),
+  miRNA       = c(10, 25, 50),
+  methylation = c(10, 25, 50),
+  CNV         = c(10, 25, 50)
+)
+
+tuned <- tune.block.splsda(
+  X = X, Y = Y,
+  ncomp        = 2,
+  test.keepX   = test_keepX,
+  design       = design,
+  validation   = "Mfold",
+  folds        = 5,
+  nrepeat      = 1,
+  dist         = "centroids.dist",
+  measure      = "BER",
+  BPPARAM      = BiocParallel::SerialParam(),
+  progressBar  = FALSE
+)
+
+best_keepX <- tuned$choice.keepX
+best_keepX
+```
+
+::: {.callout-tip}
+## How to read this output
+
+A named list with one element per block, each a vector of length `ncomp`. The numbers are the recommended `keepX` per block per component. Where the algorithm chose the smallest grid value (10), the block contributes mainly through a tight, selective signature; where it chose 50, the block needs more features to discriminate. Compare these numbers across blocks to get a first sense of which blocks carry sharper signal.
+:::
+
+### Step 5 — Fit the final model
+
+```{r}
+#| label: final-fit
+final <- block.splsda(
+  X = X, Y = Y,
+  ncomp  = 2,
+  keepX  = best_keepX,
+  design = design
+)
+```
+
+### Step 6 — Sample plot per block (`plotDiablo`, `plotIndiv`)
+
+DIABLO offers two complementary sample plots. `plotDiablo()` shows the *correlation between block scores* on a chosen component — this is the integration diagnostic. `plotIndiv()` shows patients projected onto components, separately per block.
+
+```{r}
+#| label: plot-diablo
+#| fig-cap: "Pairwise scatterplots of block scores on component 1, with class colour. The number above the diagonal is the Pearson correlation between block scores on this component; values close to ±1 mean the blocks tell the same story along this axis."
+plotDiablo(final, ncomp = 1)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Four panels on the diagonal show density of patients per block on component 1, coloured by subtype. Off-diagonal panels show pairwise scatter plots between block scores; the number is the Pearson correlation. Two interpretive axes:
+
+- **Correlations close to 1.** The four blocks agree on what component 1 represents. mRNA-methylation and mRNA-CNV correlations above ~0.7 are the integration sweet spot: the same biological signal is visible across data types, which is exactly what multi-omics integration promises.
+- **Class separation per block.** Even if blocks correlate strongly, the practically interesting question is whether each block separates subtypes. Diagonal panels with overlapping subtype densities flag a block that contributes to integration but not to discrimination.
+:::
+
+```{r}
+#| label: plot-indiv
+#| fig-cap: "Patients projected onto components 1 and 2, separately per omic block. Look for blocks where subtypes form distinct clouds (block discriminates well) and blocks where they overlap (block contributes to integration but not discrimination)."
+plotIndiv(
+  final,
+  ind.names = FALSE,
+  legend = TRUE,
+  title = "DIABLO: per-block sample plots"
+)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Four sub-plots, one per block. Each is a 2-D scatter of patients on the first two components of *that* block. Compare the blocks: a block in which subtype ellipses are clearly separated has high per-block discrimination; a block in which they overlap is contributing more to inter-block correlation than to discrimination on its own.
+:::
+
+### Step 7 — Selected features per block
+
+```{r}
+#| label: selected
+selected <- list(
+  mRNA        = head(selectVar(final, block = "mRNA",        comp = 1)$mRNA$value, 10),
+  miRNA       = head(selectVar(final, block = "miRNA",       comp = 1)$miRNA$value, 10),
+  methylation = head(selectVar(final, block = "methylation", comp = 1)$methylation$value, 10),
+  CNV         = head(selectVar(final, block = "CNV",         comp = 1)$CNV$value, 10)
+)
+selected
+```
+
+::: {.callout-tip}
+## How to read this output
+
+For each block, the top features on component 1 with their loadings. Now you can ask the integration question directly: *do the top features from each block describe the same biological process?* For example, if mRNA picks luminal markers (`MLPH`, `GATA3`, `ESR1`) and methylation picks CpGs in the *FOXA1* and *ESR1* promoter regions on the same component, the integration is consistent with a coherent ER-driven program. If the top miRNAs include known regulators of the selected mRNAs (e.g. `mir-200` family for *ZEB1*), the integration is *mechanistically* consistent.
+:::
+
+### Step 8 — Cross-block correlation visualisation (`circosPlot`)
+
+`circosPlot()` draws a circular correlation network: each tick on the perimeter is a selected feature, lines inside the circle connect features whose expressions are correlated across patients above a chosen threshold, with line colour encoding the sign of the correlation.
+
+```{r}
+#| label: circos
+#| fig-width: 7
+#| fig-height: 7
+#| fig-cap: "Circos plot of correlations between selected features across blocks. Inner lines connect feature pairs with absolute correlation above 0.7. Line colour: red = positive correlation, blue = negative correlation."
+circosPlot(
+  final,
+  cutoff   = 0.7,
+  line     = FALSE,
+  size.variables = 0.6,
+  size.legend = 0.7
+)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+The arc on the perimeter is divided into four sectors, one per block. Each tick is a selected feature, labelled by its name. Inside the circle, a curve from feature A in mRNA to feature B in methylation means *the expression of A and the methylation of B are correlated across patients above 0.7 in absolute value*. Red = positive correlation, blue = negative correlation.
+
+What to look for:
+
+- **Dense connections between mRNA and methylation** are expected (gene methylation regulates gene expression) and validate the integration.
+- **A specific mRNA connected to multiple miRNAs** is consistent with a known regulatory relationship; cross-checking with miRBase or TargetScan is a sensible next step.
+- **Connections between CNV and mRNA in the same chromosomal region** are mechanistic: amplification of a region drives expression of genes within it.
+:::
+
+### Step 9 — Honest performance estimate with `perf()`
+
+```{r}
+#| label: perf
+#| cache: true
+set.seed(42)
+cv <- perf(
+  final,
+  validation = "Mfold",
+  folds      = 5,
+  nrepeat    = 3,
+  dist       = "centroids.dist",
+  progressBar = FALSE
+)
+cv$WeightedVote.error.rate$centroids.dist
+```
+
+::: {.callout-tip}
+## How to read this output
+
+DIABLO returns a *weighted vote* across blocks: each block predicts the class, votes are weighted by predictive performance, and the consensus is reported. The table breaks the BER per cumulative-component count by class. Compare these per-class numbers with the sPLS-DA values from the previous chapter — that is the whole point of running DIABLO.
+:::
+
+## Critical interpretation: what did integration buy us?
+
+The interpretive question every DIABLO paper must answer is: **did integrating four blocks beat the best single block, and if so, by how much, on which classes?**
+
+The cleanest way to answer is to line up the per-class cross-validated error from the [sPLS-DA chapter](../02_splsda/splsda.qmd) (mRNA only, three components) against this DIABLO run (four blocks, two components, weighted vote across blocks).
+
+| Subtype | sPLS-DA (mRNA only, 3 comps) | DIABLO (4 blocks, 2 comps) | Direction |
+|---------|:-----------------------------:|:--------------------------:|:---------:|
+| LumA    | 0.04                          | 0.30                       | ↑ worse   |
+| Her2    | 0.25                          | 0.45                       | ↑ worse   |
+| LumB    | 0.46                          | 0.27                       | ↓ better  |
+| Normal  | **1.00**                      | **0.10**                   | ↓↓ much better |
+| Basal   | 0.02                          | 0.09                       | ↑ slightly worse |
+| **BER** | **0.35**                      | **0.24**                   | ↓ better  |
+
+Three things deserve commentary:
+
+::: {.callout-caution}
+## The big win is Normal-like
+
+The class that single-omic sPLS-DA could not classify *at all* (1.00 error) drops to 0.10 once methylation is added. This is exactly the multi-omics integration story working as predicted: Normal-like tumours are defined by a *quiet methylation profile* close to normal breast epithelium, a feature invisible to mRNA expression but obvious in $\beta$-values. **If you only remember one number from this entire chapter, remember this one: integration rescued an unclassifiable subtype.**
+:::
+
+::: {.callout-caution}
+## LumA and Basal got slightly worse, and that is normal
+
+sPLS-DA over-fit the mRNA signal on these two large, well-separated classes. DIABLO's design matrix forces cross-block agreement, which costs a few percent on the easy classes in exchange for the dramatic gain on Normal-like. This is the **integration-discrimination trade-off**. With a smaller design weight ($D = 0$, equivalent to per-block sPLS-DA), LumA error would return towards 0.00, but at the cost of losing Normal-like again. There is no free lunch; the question is which trade-off is clinically more useful, and rescuing an unclassifiable class is almost always worth a small loss elsewhere.
+:::
+
+::: {.callout-caution}
+## Overall BER improved meaningfully (0.35 → 0.24), but the headline is misleading
+
+A single overall number hides the per-class story. A reviewer would (correctly) ask "where did the improvement come from?" — and the answer is *almost entirely Normal-like and LumB*, the two classes for which mRNA alone was insufficient. Always pair the BER summary with the per-class table.
+:::
+
+If DIABLO does *not* improve in your run, two diagnostics are worth running before drawing pessimistic conclusions:
+
+1. **Did the design matrix shut down the integration?** A weighted design with $D = 0.1$ is a soft constraint; if your blocks have wildly different scales, integration may be vestigial. Try $D = 0.5$.
+2. **Did one block dominate?** Inspect the diagonal panels of `plotDiablo()`: if only one block separates classes, the weighted vote will inherit that block's limitations.
+
+## Limitations
+
+DIABLO inherits sPLS-DA's limitations and adds a few of its own:
+
+- **Linear and supervised, like sPLS-DA.** No interactions, no thresholds, requires a known outcome.
+- **Sample size compounds across blocks.** With four blocks of high-dimensional data and 671 patients, the effective sample-to-feature ratio per block remains demanding. CV estimates can be optimistic.
+- **The design matrix is a free choice with real consequences.** A reviewer can legitimately ask "why did you choose $D = 0.1$ and not $0.5$?". Sensitivity analyses across designs are good practice.
+- **Block alignment is your responsibility.** The package does not check that the patient order matches across blocks; misaligned data fits without errors.
+- **Computationally heavier than sPLS-DA**, especially the tuning step. With four blocks and `nrepeat = 5`, expect tuning runs of an hour or more on standard laptops.
+
+## What this leaves on the table
+
+DIABLO gives us a sparse, interpretable, per-block signature with a quantitative integration score. The two main things it cannot do are: (i) handle missing values gracefully when entire blocks are absent for some patients (next chapter, MOFA2, fixes that), and (ii) discover subtypes when no labelled outcome is available (chapters on MOFA2 and SNF address that).
+
+In the [next chapter](../04_mofa2/mofa2.qmd) we keep the same dataset but switch to **MOFA2**, an unsupervised Bayesian factor model that handles mixed likelihoods and missing data natively. The shift from supervised to unsupervised is methodologically important: we will be asking the data to tell us *what* the structure is, not just to project onto a known label.

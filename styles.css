@@ -1,0 +1,142 @@
+/* ---------------------------------------------------------------------------
+   Methods for Multi-Omics Integration — shared visual style
+   Goal: a calm, academic palette with enough colour to make navigation easy
+   without looking like a children's book. Anchored on a deep teal primary
+   (suggesting blending / mixing, appropriate for multi-omics).
+   --------------------------------------------------------------------------- */
+
+:root {
+  --mom-primary:        #1B5E6B;   /* deep teal — navbar, links */
+  --mom-primary-light:  #2D8A9D;
+  --mom-accent:         #C97B3F;   /* warm amber — emphasis */
+  --mom-accent-soft:    #F2E1CC;   /* table headers, callout fills */
+  --mom-success:        #4F8A6B;
+  --mom-warning:        #B58319;
+  --mom-danger:         #B0473D;
+  --mom-bg-soft:        #F8F6F2;   /* warm cream for code blocks */
+  --mom-text:           #1F2A33;
+  --mom-text-muted:     #4F5B68;
+  --mom-rule:           #DDE3E6;
+}
+
+/* --- Global body --------------------------------------------------------- */
+body {
+  color: var(--mom-text);
+  font-feature-settings: "kern" 1, "liga" 1;
+}
+
+/* --- Navbar (uses Bootstrap "primary" colour we override here) ----------- */
+.navbar {
+  background-color: var(--mom-primary) !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.navbar-brand, .navbar .nav-link {
+  color: #ffffff !important;
+}
+.navbar .nav-link:hover {
+  color: var(--mom-accent-soft) !important;
+}
+
+/* --- Headings: subtle teal accent ---------------------------------------- */
+h1, h2 {
+  color: var(--mom-primary);
+  letter-spacing: -0.01em;
+}
+h1 {
+  border-bottom: 2px solid var(--mom-primary);
+  padding-bottom: 0.3em;
+}
+h2 {
+  margin-top: 2.2em;
+  border-bottom: 1px solid var(--mom-rule);
+  padding-bottom: 0.2em;
+}
+h3 {
+  color: var(--mom-primary-light);
+  margin-top: 1.6em;
+}
+
+/* --- Links --------------------------------------------------------------- */
+a {
+  color: var(--mom-primary);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--mom-accent);
+  text-decoration: underline;
+}
+
+/* --- Code blocks --------------------------------------------------------- */
+pre, code {
+  font-family: "JetBrains Mono", "Fira Code", "Source Code Pro", Consolas,
+               monospace;
+}
+div.sourceCode {
+  background-color: var(--mom-bg-soft) !important;
+  border: 1px solid var(--mom-rule);
+  border-radius: 6px;
+  padding: 0.4em 0.2em;
+}
+code:not(pre code) {
+  background-color: var(--mom-accent-soft);
+  color: #5A3A1A;
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+  font-size: 0.93em;
+}
+
+/* --- Tables -------------------------------------------------------------- */
+table {
+  margin: 1em auto;
+}
+table thead {
+  background-color: var(--mom-accent-soft);
+  color: var(--mom-text);
+  border-bottom: 2px solid var(--mom-primary);
+}
+table tbody tr:nth-child(odd) {
+  background-color: rgba(248, 246, 242, 0.6);
+}
+
+/* --- Callouts: a touch of colour but never neon ------------------------- */
+.callout.callout-style-default {
+  border-radius: 6px;
+}
+.callout-note   { border-left-color: var(--mom-primary)        !important; }
+.callout-tip    { border-left-color: var(--mom-success)        !important; }
+.callout-warning{ border-left-color: var(--mom-warning)        !important; }
+.callout-caution{ border-left-color: var(--mom-accent)         !important; }
+.callout-important { border-left-color: var(--mom-danger)      !important; }
+
+/* --- Figure captions ----------------------------------------------------- */
+figcaption {
+  color: var(--mom-text-muted);
+  font-size: 0.93em;
+  font-style: italic;
+  margin-top: 0.4em;
+}
+
+/* --- Sidebar ------------------------------------------------------------- */
+.sidebar-navigation .sidebar-section-item .sidebar-item-text {
+  color: var(--mom-primary);
+}
+.sidebar-navigation .active .sidebar-item-text {
+  color: var(--mom-accent) !important;
+  font-weight: 600;
+}
+
+/* --- Page footer --------------------------------------------------------- */
+.page-footer {
+  border-top: 1px solid var(--mom-rule);
+  color: var(--mom-text-muted);
+  font-size: 0.9em;
+}
+
+/* --- Inline math: tighter vertical alignment ----------------------------- */
+.math.inline { vertical-align: -0.1em; }
+
+/* --- Print --------------------------------------------------------------- */
+@media print {
+  .navbar, .sidebar, .page-footer { display: none !important; }
+  body { font-size: 10pt; }
+}

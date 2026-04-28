@@ -1,0 +1,120 @@
+project:
+  type: website
+  output-dir: _site
+  execute-dir: project
+  resources:
+    - "assets/**"
+
+website:
+  title: "Methods for Multi-Omics Integration"
+  description: "Practical, reproducible tutorials on the major families of multi-omics integration methods. Supplementary material to Rebellon-Sanchez et al. (in preparation)."
+  site-url: https://derebellon.github.io/Methods_for_multiomics_integration
+  repo-url: https://github.com/derebellon/Methods_for_multiomics_integration
+  repo-actions: [edit, issue]
+  page-navigation: true
+  back-to-top-navigation: true
+  search:
+    location: navbar
+    type: overlay
+  navbar:
+    background: primary
+    pinned: true
+    left:
+      - href: index.qmd
+        text: "Home"
+      - href: 01_dataset/dataset.qmd
+        text: "Dataset"
+      - text: "Tutorials"
+        menu:
+          - text: "1. sPLS-DA — single-block primer"
+            href: 02_splsda/splsda.qmd
+          - text: "2. DIABLO — sparse multi-block"
+            href: 03_diablo/diablo.qmd
+          - text: "3. MOFA2 — Bayesian factor analysis"
+            href: 04_mofa2/mofa2.qmd
+          - text: "4. SNF — patient similarity fusion"
+            href: 05_snf/snf.qmd
+          - text: "5. WGCNA — co-expression networks"
+            href: 06_wgcna/wgcna.qmd
+          - text: "6. VAE — deep generative integration"
+            href: 07_vae/vae.qmd
+      - href: 08_comparison/comparison.qmd
+        text: "Comparison"
+      - href: references.qmd
+        text: "References"
+    right:
+      - icon: github
+        href: https://github.com/derebellon/Methods_for_multiomics_integration
+        aria-label: GitHub repository
+  sidebar:
+    style: docked
+    collapse-level: 2
+    contents:
+      - index.qmd
+      - section: "Setup"
+        contents:
+          - 01_dataset/dataset.qmd
+      - section: "Method tutorials"
+        contents:
+          - text: "1. sPLS-DA"
+            href: 02_splsda/splsda.qmd
+          - text: "2. DIABLO"
+            href: 03_diablo/diablo.qmd
+          - text: "3. MOFA2"
+            href: 04_mofa2/mofa2.qmd
+          - text: "4. SNF"
+            href: 05_snf/snf.qmd
+          - text: "5. WGCNA"
+            href: 06_wgcna/wgcna.qmd
+          - text: "6. VAE"
+            href: 07_vae/vae.qmd
+      - section: "Cross-method"
+        contents:
+          - 08_comparison/comparison.qmd
+      - references.qmd
+  page-footer:
+    background: light
+    left: "© 2026 David E. Rebellon-Sanchez. Released under MIT (code) and CC-BY 4.0 (text)."
+    right:
+      - icon: github
+        href: https://github.com/derebellon/Methods_for_multiomics_integration
+
+bibliography: references.bib
+csl: https://www.zotero.org/styles/nature
+
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    toc: true
+    toc-depth: 3
+    toc-location: right
+    code-fold: false
+    code-tools: true
+    code-link: true
+    code-copy: true
+    code-overflow: wrap
+    code-line-numbers: false
+    fig-width: 7
+    fig-height: 5
+    fig-dpi: 150
+    fig-align: center
+    fig-cap-location: bottom
+    df-print: paged
+    smooth-scroll: true
+    link-external-newwindow: true
+    link-external-icon: true
+    citations-hover: true
+    footnotes-hover: true
+    highlight-style: github
+
+execute:
+  freeze: auto
+  warning: false
+  message: false
+  echo: true
+
+knitr:
+  opts_chunk:
+    cache.path: "_cache/"
+    fig.path: "figures/"

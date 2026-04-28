@@ -1,0 +1,171 @@
+---
+title: "The shared dataset"
+subtitle: "MLOmics GS-BRCA, what it is and what it is not"
+---
+
+# Dataset
+
+Before we touch a single method, we settle on a dataset. The choice is more consequential than it looks: if every tutorial used a different dataset, the reader could never tell whether differences in results came from differences in the methods or differences in the input. The whole point of running these tutorials side-by-side disappears.
+
+So we use the same dataset throughout. This chapter introduces it, answers the obvious question of *whether it is a complete cohort or a subset*, walks through the file layout, flags two practical gotchas you would otherwise hit, and shows the class distribution. Once you have read it once, the method tutorials assume the dataset is loaded and move straight to the algorithm.
+
+## Why this dataset
+
+We use **GS-BRCA**, the gold-standard breast cancer subset of the **MLOmics** database released by Yang et al. [@yang2025mlomics] and derived from The Cancer Genome Atlas (TCGA) [@tcga2012brca].
+
+Three properties make it an unusually good teaching dataset:
+
+1. **It is already cleaned.** The MLOmics authors performed gene-symbol harmonisation, normalisation, and missing-value handling before release. Without that, the first half of every tutorial would be QC.
+2. **Four omics layers with different statistical natures.** mRNA and miRNA expression are continuous; DNA methylation is bounded continuous ($\beta$-values in $[0,1]$); copy-number variation is essentially integer / categorical. This forces every method to confront heterogeneous data, which is the central challenge of multi-omics integration in real life.
+3. **A clear, biologically meaningful supervised outcome.** PAM50 intrinsic subtypes [@parker2009pam50] are one of the most established molecular taxonomies in oncology, used clinically. Five classes (Luminal A, Luminal B, HER2-enriched, Basal-like, Normal-like) with known biological meaning let us *sanity-check* method outputs against established biology.
+
+## Is this a complete study or a subset, and can we draw real conclusions from it?
+
+This is the right question to ask before any analysis, so we answer it directly.
+
+::: {.callout-important}
+## Short answer
+
+GS-BRCA is **a curated subset of TCGA-BRCA**, not the full upstream cohort. It is the **complete and canonical subset used by the multi-omics machine-learning community**, and it is fit for **methodological benchmarking and preliminary biological interpretation**, but conclusions drawn from it should be treated as *generative hypotheses* rather than definitive findings about breast cancer biology.
+:::
+
+The longer answer:
+
+- **Source cohort.** The original TCGA-BRCA project enrolled 1,098 invasive breast carcinoma patients across multiple US institutions, profiled across mRNA, miRNA, methylation, copy-number, mutation, protein expression and clinical variables.
+- **What MLOmics keeps.** The "Golden-Standard" BRCA dataset retains the **671 patients** for whom (i) all four core omic layers are available, and (ii) a PAM50 subtype call exists in the TCGA reference. Patients with missing layers or unassigned subtypes are dropped.
+- **What this means for inference.** Because the inclusion criterion is *completeness across modalities*, the resulting cohort is not a random sample of breast cancer patients in the population; it is a sample of *patients on whom enough data was collected*. This biases the cohort towards larger tumours collected at well-resourced sites, and it slightly under-samples rare subtypes (HER2 *n* = 42, Normal-like *n* = 31).
+- **For our purposes (methodological tutorial)** this is fine: the goal is to teach how each method behaves when given the same input. The methods themselves do not care that the cohort is biased, only that the input is internally consistent.
+- **For genuinely novel biological claims** (e.g. *"this gene drives Basal-like recurrence"*), an MLOmics-only result should be confirmed in an independent cohort before publication. The tutorials will treat their findings as *preliminary* throughout for this reason.
+
+The bottom line: it is real data on real patients with real subtypes, large enough that the methods produce stable, interpretable results, and small enough that everything in this tutorial runs on a laptop. That is the right balance for teaching.
+
+## Where to get the data
+
+The files used here come from the Hugging Face mirror of the MLOmics repository. They live under `Main_Dataset/Classification_datasets/GS-BRCA/Top/`. The "Top" feature scale keeps the most variable genes (selected by ANOVA across cancer types) and yields manageable matrices for tutorial purposes.
+
+We **recommend a direct download with `curl`** rather than `git clone`-ing the whole MLOmics archive, for three reasons:
+
+::: {.callout-tip}
+## Direct download or `git clone`?
+
+- **`curl` (recommended).** You only need five files (the GS-BRCA "Top" feature subset). Direct download brings just those.
+- **`git clone https://huggingface.co/datasets/AIBIC/MLOmics`.** Brings the entire upstream archive (~3 GB, all 32 cancers, all three feature scales) and requires `git-lfs` to be installed. Useful only if you intend to extend the tutorials to other cancer types, in which case bandwidth is well spent once.
+
+If you are unsure, use `curl`.
+:::
+
+```bash
+mkdir -p data/raw/GS-BRCA/Top
+BASE="https://huggingface.co/datasets/AIBIC/MLOmics/resolve/main/Main_Dataset/Classification_datasets/GS-BRCA/Top"
+for f in BRCA_label_num.csv BRCA_miRNA_top.csv BRCA_mRNA_top.csv \
+         BRCA_Methy_top.csv BRCA_CNV_top.csv; do
+  curl -fL -o "data/raw/GS-BRCA/Top/$f" "$BASE/$f"
+done
+```
+
+You should end up with these five files (~186 MB total):
+
+| File                    | Purpose                            | Size     |
+|-------------------------|------------------------------------|----------|
+| `BRCA_mRNA_top.csv`     | mRNA expression (top 5,000 genes)  | 59 MB    |
+| `BRCA_miRNA_top.csv`    | miRNA expression (366 features)    | 1.8 MB   |
+| `BRCA_Methy_top.csv`    | DNA methylation $\beta$-values     | 59 MB    |
+| `BRCA_CNV_top.csv`      | Gene-level copy-number             | 59 MB    |
+| `BRCA_label_num.csv`    | Numeric subtype labels             | 1.4 KB   |
+
+The numeric labels map to PAM50 names through the `GS-Subtype labels.xlsx` file in the MLOmics GitHub repository. For BRCA:
+
+| Numeric label | PAM50 subtype |
+|:-------------:|---------------|
+| 0             | LumA          |
+| 1             | Her2          |
+| 2             | LumB          |
+| 3             | Normal        |
+| 4             | Basal         |
+
+Our loader applies this mapping automatically and returns a factor with named levels, so you do not need to remember the numbers in your downstream code.
+
+## Two practical gotchas you would otherwise hit
+
+We mention these here, once, so the method tutorials do not have to:
+
+::: {.callout-warning}
+## Orientation matters
+
+MLOmics ships every omic CSV with **features in rows and samples in columns**. The first column holds feature names; the header row holds TCGA barcodes. Most R machine-learning packages, including `mixOmics` and `MOFA2`, expect the opposite: **samples in rows, features in columns**. The helper `load_mlomics_brca()` in `R/load_mlomics.R` handles the transpose, aligns sample IDs across the four omics, and returns matrices ready to use.
+:::
+
+::: {.callout-warning}
+## Missing miRNA names
+
+The miRNA file ships with 166 of its 366 features carrying an empty name field, an artefact of the MLOmics processing pipeline. We do not silently drop them, because they may still carry signal. Instead, the loader assigns synthetic names (`unnamed_1`, `unnamed_2`, ...) and deduplicates the rest with `make.unique()`. If your downstream method requires gene-symbol annotation (e.g. pathway enrichment), pre-filter to the named miRNAs.
+:::
+
+## Loading the data
+
+With the two gotchas handled by the helper, loading is one line. We will repeat this exact pattern at the start of every subsequent tutorial.
+
+```{r}
+#| label: load-data
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+```
+
+After loading, `brca` is a named list with the four omic matrices, the subtype factor, and the sample IDs:
+
+```{r}
+#| label: data-overview
+sapply(brca[c("mRNA", "miRNA", "methylation", "cnv")], dim)
+```
+
+```{r}
+#| label: dim-table
+n  <- nrow(brca$mRNA)
+p  <- sapply(brca[c("mRNA","miRNA","methylation","cnv")], ncol)
+
+knitr::kable(
+  data.frame(
+    Layer    = c("mRNA","miRNA","Methylation","CNV"),
+    Features = p,
+    Samples  = n
+  ),
+  caption = "GS-BRCA dimensions after transposing to samples-in-rows."
+)
+```
+
+So we have **671 patients** with all four omics measured, **5,000 features per layer** for mRNA / methylation / CNV, and **366 for miRNA**. By omics standards this is genuinely *small*, which is part of what makes it tractable as a tutorial dataset.
+
+## Class distribution
+
+The PAM50 distribution looks like this:
+
+```{r}
+#| label: class-distribution
+#| fig-cap: "PAM50 subtype distribution in GS-BRCA. Luminal A dominates, as expected for a population-based breast cancer cohort. Imbalance has methodological consequences (stratified CV, balanced error rate) flagged below."
+library(ggplot2)
+
+ggplot(data.frame(Subtype = brca$labels), aes(Subtype, fill = Subtype)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.3) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = "Number of patients")
+```
+
+The class imbalance is biologically real (Luminal A is the most common subtype in the population) but it has methodological consequences:
+
+- Any cross-validation scheme used downstream **must stratify by subtype**, otherwise small classes can end up entirely absent from a fold.
+- Accuracy on the rare classes (Normal-like *n* = 31, HER2 *n* = 42) is a stricter test than overall accuracy. We will use the **balanced error rate** (BER) instead of accuracy throughout, and report per-class error whenever the method allows it.
+
+Each method tutorial flags how it handles this imbalance.
+
+## What we deliberately do *not* do
+
+To keep tutorials focused on integration methodology, we deliberately skip several steps that a real translational study would include. Stating them once here saves us from repeating the disclaimer in every chapter:
+
+- **No fresh feature selection.** The "Top" version already removes most uninformative features; refitting selection here would inflate apparent performance.
+- **No batch correction.** The MLOmics pipeline performs upstream batch correction. With your own data, you would need to revisit this.
+- **No outer train / test split at the patient level.** PAM50 subtypes are well-known biology, so the goal is *teaching* rather than competing on a benchmark. Where train / test splits are needed for honest performance estimates, each tutorial introduces them locally with cross-validation.
+
+With the dataset ready and these caveats declared, we can turn to the first method.

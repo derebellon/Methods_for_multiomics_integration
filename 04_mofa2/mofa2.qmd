@@ -1,0 +1,281 @@
+---
+title: "Tutorial 3 — MOFA2"
+subtitle: "Unsupervised Bayesian factor analysis for multi-omics"
+image: ../assets/thumb_mofa2.png
+---
+
+# MOFA2
+
+## Where this method fits in the multi-omics landscape
+
+MOFA2 (Multi-Omics Factor Analysis, version 2) [@argelaguet2018mofa; @argelaguet2020mofaplus] sits at the *unsupervised, sparse, linear, multi-block, Bayesian* corner of the methodological landscape. In the Bai\~ao et al. (2025) taxonomy it belongs to the *probabilistic / matrix-factorisation* family.
+
+It differs from DIABLO in three consequential ways:
+
+| Property                | DIABLO                  | **MOFA2**                          |
+|-------------------------|-------------------------|-------------------------------------|
+| Supervision             | Requires labelled outcome `Y` | **Unsupervised**: no labels needed |
+| Likelihood per block    | Implicit Gaussian      | **Explicit**: Gaussian, Bernoulli or Poisson per block |
+| Missing data            | Errors on `NA`         | **Marginalised over**: handled natively |
+| Factors per view        | One axis per block per component | **Shared latent factors** across blocks, with per-view weights |
+| What you get out        | Predictive model + per-block features | **A decomposition** of variance into interpretable factors |
+
+If your goal is **subtype discovery** (rather than predicting a known label) and your data has missing entries, MOFA2 is usually the right first stop. It is also the method whose probabilistic framework most easily extends to single-cell, longitudinal and multi-group designs.
+
+## The biological problem we are solving here
+
+Same 671 patients, same four omics. But this time we pretend we *do not have* the PAM50 labels. We ask the data:
+
+1. **What latent biological factors generate the variability we observe across all four omics simultaneously?**
+2. **For each factor, which view contributes the most (mRNA-driven? methylation-driven?) and which features carry the signal?**
+3. **Once we have the factors, can we relate them post hoc to known clinical labels (PAM50 subtype, survival, treatment response)?**
+
+The first two questions are answered by the model itself; the third is a downstream analysis we do once we have the factor scores.
+
+## Intuition before any equation
+
+The model believes that all four omic matrices are noisy, linear projections of a small number of *shared* latent factors plus *view-specific* noise. If we could measure the latent factors directly, the four omics would just be different windows onto the same underlying biology. Since we cannot measure them directly, MOFA2 infers them by maximising the consistency of the projections across views.
+
+A factor is **shared** when it explains variance in multiple views (e.g. a Basal-like factor that loads both luminal-marker mRNAs and methylation of *FOXA1* promoter) and **view-specific** when it explains variance in only one view (e.g. a methylation-only batch effect or a CNV-only chromosomal rearrangement program).
+
+The L1-like sparsity in MOFA2 is achieved through a Bayesian device called *Automatic Relevance Determination* (ARD): a prior on the per-feature precision that forces irrelevant weights to zero in expectation. You do not tune ARD by hand; the model learns it.
+
+## Mathematical formulation
+
+Let $Y^{(m)} \in \mathbb{R}^{n \times d_m}$ be the data matrix for view $m$ ($m = 1,\ldots,M$). Let $Z \in \mathbb{R}^{n \times K}$ be the latent factor matrix (shared across views), and $W^{(m)} \in \mathbb{R}^{d_m \times K}$ the loading matrix for view $m$. The model is:
+
+$$
+Y^{(m)} = Z\,W^{(m)\top} + \varepsilon^{(m)}, \qquad \varepsilon^{(m)} \sim \mathcal{N}(0, \tau^{(m)-1} I)
+$$
+
+with ARD priors on the columns of $W^{(m)}$ enforcing per-factor sparsity. For non-Gaussian views, the Gaussian likelihood is replaced by Bernoulli (binary data) or Poisson (count data). Inference is done by stochastic variational inference, maximising the **Evidence Lower Bound (ELBO)**.
+
+::: {.callout-note}
+## ELBO in one paragraph
+
+Variational inference approximates an intractable posterior $p(Z, W \mid Y)$ by a tractable family $q(Z, W)$ chosen to be as close as possible to the true posterior. *Closeness* is measured by Kullback-Leibler divergence. Maximising the **Evidence Lower Bound** (ELBO) is mathematically equivalent to minimising that divergence. You will see ELBO printed during training; what matters is that it should *increase monotonically* and *plateau* — failure to plateau indicates non-convergence.
+:::
+
+## Toy example by hand
+
+We construct a 6-patient toy with two views and two ground-truth factors. Patients 1–3 are "high" on factor 1, patients 4–6 are "high" on factor 2. View A carries factor 1 strongly and factor 2 weakly; view B is the opposite. We expect MOFA2 to recover both factors and assign each view a clear weight pattern.
+
+```{r}
+#| label: toy
+#| message: false
+suppressPackageStartupMessages(library(MOFA2))
+
+set.seed(1)
+Z <- rbind(c(2, 0), c(2, 0), c(2, 0), c(0, 2), c(0, 2), c(0, 2))
+W_A <- matrix(c(1.0, 0.1,  0.9, 0.1,  -1.0, 0.1), nrow = 3, byrow = TRUE)
+W_B <- matrix(c(0.1, 1.0,  0.1, 0.9,   0.1,-1.0), nrow = 3, byrow = TRUE)
+
+toy_A <- Z %*% t(W_A) + matrix(rnorm(6*3, sd = 0.1), 6, 3)
+toy_B <- Z %*% t(W_B) + matrix(rnorm(6*3, sd = 0.1), 6, 3)
+
+# MOFA2 expects: list of FEATURES x SAMPLES matrices (the OPPOSITE of mixOmics)
+toy_data <- list(viewA = t(toy_A), viewB = t(toy_B))
+colnames(toy_data$viewA) <- colnames(toy_data$viewB) <- paste0("p", 1:6)
+rownames(toy_data$viewA) <- paste0("A_f", 1:3)
+rownames(toy_data$viewB) <- paste0("B_f", 1:3)
+
+mofa <- create_mofa(toy_data)
+data_opts <- get_default_data_options(mofa)
+model_opts <- get_default_model_options(mofa); model_opts$num_factors <- 2
+train_opts <- get_default_training_options(mofa); train_opts$verbose <- FALSE
+mofa <- prepare_mofa(mofa, data_options = data_opts,
+                     model_options = model_opts, training_options = train_opts)
+mofa <- run_mofa(mofa, use_basilisk = TRUE, save_data = FALSE)
+
+# Variance explained per view per factor
+get_variance_explained(mofa)$r2_per_factor
+```
+
+::: {.callout-tip}
+## How to read this output
+
+A list with one matrix per group (we have one group here, called `group1`). Inside the matrix: rows are factors, columns are views, cell values are $R^2$ (proportion of variance in that view explained by that factor). For our toy, factor 1 should explain most variance in view A and little in view B; factor 2 should be the opposite. If you see a different pattern, the model has not separated the two latent dimensions.
+:::
+
+## What `MOFA2` expects from us
+
+| Input              | Required form                                                        |
+|--------------------|----------------------------------------------------------------------|
+| `data`             | Named list of matrices, **features in rows, samples in columns** (opposite of mixOmics). Sample order must match across views. |
+| `views`            | Inferred from list names.                                            |
+| `groups`           | Optional: a vector of length `n_samples` for multi-group analyses (e.g. multiple cohorts). |
+| Likelihood         | Set per view via `model_options$likelihoods` ∈ {`gaussian`, `bernoulli`, `poisson`}. |
+| `num_factors`      | Maximum number of factors to estimate; the model prunes unused ones. |
+
+::: {.callout-warning}
+## Orientation flip from mixOmics
+
+MOFA2 follows the Bioconductor convention: *features in rows, samples in columns*. mixOmics follows the opposite. When porting code between methods, always check `dim()` first.
+:::
+
+::: {.callout-warning}
+## Python backend
+
+MOFA2 calls the Python package `mofapy2` under the hood. With `use_basilisk = TRUE`, the package installs an isolated conda environment automatically; the first call takes a few minutes. With `use_basilisk = FALSE` you must have `mofapy2` installed in your active Python environment.
+:::
+
+## Canonical workflow on GS-BRCA (4 blocks, unsupervised)
+
+### Step 1 — Load the data, transpose to MOFA2 orientation
+
+```{r}
+#| label: load
+#| message: false
+suppressPackageStartupMessages({
+  library(MOFA2)
+  library(ggplot2)
+})
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+
+mofa_data <- list(
+  mRNA        = t(brca$mRNA),         # features x samples
+  miRNA       = t(brca$miRNA),
+  methylation = t(brca$methylation),
+  CNV         = t(brca$cnv)
+)
+sapply(mofa_data, dim)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+Two numbers per view: features (top), samples (bottom). All four columns must show the same number of samples; the loader guarantees this.
+:::
+
+### Step 2 — Build, prepare and train the MOFA object
+
+```{r}
+#| label: build-train
+#| cache: true
+mofa <- create_mofa(mofa_data)
+
+data_opts  <- get_default_data_options(mofa)
+model_opts <- get_default_model_options(mofa)
+model_opts$num_factors <- 10
+train_opts <- get_default_training_options(mofa)
+train_opts$verbose      <- FALSE
+train_opts$convergence_mode <- "fast"
+train_opts$seed         <- 42
+
+mofa <- prepare_mofa(
+  object           = mofa,
+  data_options     = data_opts,
+  model_options    = model_opts,
+  training_options = train_opts
+)
+
+mofa <- run_mofa(mofa, use_basilisk = TRUE, save_data = FALSE)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+`run_mofa()` prints ELBO at intervals during training and stops when convergence_mode says it has plateaued. With `convergence_mode = "fast"` (used here) the threshold is loose; for paper-quality models switch to `"medium"` or `"slow"`. Training time scales with $N \times \sum d_m \times K$; for our problem expect 1–3 minutes on a modern laptop.
+:::
+
+### Step 3 — How much variance does each factor explain in each view?
+
+This is the headline plot of any MOFA2 analysis. It tells you which views the model thinks are most informative, and which factors are "shared" across views vs "view-specific".
+
+```{r}
+#| label: var-explained
+#| fig-width: 7
+#| fig-height: 4
+#| fig-cap: "Per-factor, per-view variance explained ($R^2$). Rows: latent factors; columns: omic views; colour intensity: fraction of variance explained. Factors with non-zero $R^2$ across multiple columns are shared factors; factors with $R^2$ on one column only are view-specific."
+plot_variance_explained(mofa, x = "view", y = "factor")
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+The matrix is the heart of the unsupervised story. Some factors will glow brightly across multiple views — those are the *shared biological programmes* (e.g. a Basal-vs-luminal axis visible in mRNA, methylation and CNV). Other factors will be dark except in one column — those are *view-specific* and often correspond to technical artefacts or to biology that is genuinely unique to one assay.
+
+What to act on:
+
+- **A factor with non-zero $R^2$ in 3–4 views** is a multi-omic biological signal worth following up.
+- **A factor with $R^2$ in one view only** deserves scrutiny: is it real biology unique to that platform, or is it a batch effect that survived QC?
+- **Factors with negligible $R^2$ everywhere** are noise; the ARD prior should have shrunk them. If many such factors remain, lower `num_factors`.
+:::
+
+### Step 4 — Sample plots in factor space
+
+```{r}
+#| label: factor-plot
+#| fig-cap: "Patients projected onto factors 1 and 2, coloured by PAM50 subtype (added post hoc, the model never saw labels). If colours separate, the unsupervised factor space recovered known biology."
+samples_metadata(mofa) <- data.frame(
+  sample = brca$sample_ids,
+  Subtype = brca$labels
+)
+
+plot_factors(mofa, factors = c(1, 2), color_by = "Subtype")
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Each dot is a patient on factors 1 and 2 (sample scores). Colour is the PAM50 subtype, which we attach *after* training to evaluate whether the unsupervised model recovered known structure. If the subtypes form distinct clouds, MOFA2 found biological signal. If the colours are randomly scattered, either the factors have not converged or the biology of interest lives on later factors.
+:::
+
+### Step 5 — Top features per factor
+
+```{r}
+#| label: top-features
+top_mRNA_f1 <- get_weights(mofa, views = "mRNA", factors = 1, as.data.frame = TRUE)
+top_mRNA_f1 <- top_mRNA_f1[order(-abs(top_mRNA_f1$value)), ]
+head(top_mRNA_f1, 10)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+`feature` is the gene name, `factor` is which latent factor we asked for, `value` is the loading. Sign convention is the same as sPLS-DA: a positive loading means the gene increases with the factor score; a negative loading means it decreases. Compare these top-10 mRNA features for factor 1 against the sPLS-DA component-1 list — they should overlap substantially if the unsupervised factor recovered the same luminal-vs-basal axis.
+:::
+
+### Step 6 — Quantitative comparison with PAM50
+
+```{r}
+#| label: factor-vs-pam50
+#| fig-cap: "Boxplot of factor 1 scores by PAM50 subtype. Strong separation by class (without the model ever seeing the class label) is the validation that this factor captures clinically meaningful biology."
+plot_factor(mofa, factors = 1, color_by = "Subtype", group_by = "Subtype")
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+If the boxplots stack neatly along the y-axis (all LumA at one end, all Basal at the other), the unsupervised factor is essentially the supervised axis sPLS-DA found, recovered without supervision — strong validation. Overlapping boxplots mean the factor captures variability that is *not* directly aligned with PAM50; that is also valuable, because it may correspond to clinically relevant biology orthogonal to subtype (e.g. proliferation rate, immune infiltration).
+:::
+
+## Critical interpretation: did unsupervised integration find PAM50?
+
+The key question for this chapter is **whether MOFA2, given no labels, found the structure that PAM50 encodes**.
+
+::: {.callout-caution}
+## What to look for
+
+- **Variance-explained heatmap.** At least one factor should glow strongly in mRNA + methylation; that factor is your candidate for the luminal-vs-basal axis.
+- **Sample plot in factor space.** Colouring by PAM50 should show clear separation of LumA vs Basal on the candidate factor; HER2 and Normal often appear on a *different* factor.
+- **Top features.** Factor-1 top mRNAs should overlap with sPLS-DA component-1 top mRNAs (e.g. *MLPH*, *GATA3*, *ESR1*). Factor-1 top methylation features should be CpGs in luminal-marker promoters.
+- **Boxplots.** Factor 1 should produce ordered boxplots from LumA at one extreme to Basal at the other; HER2 and LumB usually sit between.
+:::
+
+If MOFA2 finds factors that align with PAM50 *without ever seeing PAM50*, you have validated the biology twice (first supervised, now unsupervised). If MOFA2 finds factors that do *not* align with PAM50, it has not failed — it may simply have found a different, possibly more clinically relevant, structure (e.g. immune infiltration, proliferation, treatment response) that orthogonalises subtype. Both are valid scientific findings.
+
+## Limitations
+
+- **Linear within each view.** Like DIABLO, MOFA2 cannot capture non-linear feature interactions.
+- **Computationally heavier than DIABLO** for large feature counts; consider pre-filtering to the top variable features.
+- **The number of factors is a free parameter.** Set it generously (10–20) and let ARD prune; do not be alarmed if 3–4 of your 10 factors end up explaining negligible variance.
+- **Convergence is not guaranteed**, especially with `convergence_mode = "fast"`. For published analyses use `"medium"` or `"slow"` and inspect the ELBO trace.
+- **Factor sign and order are not identifiable.** Factor 1 in two independent runs may be the same biology with the sign flipped, or may be a different factor entirely; always cross-check by looking at top features.
+
+## What this leaves on the table
+
+We have an unsupervised factorisation of the four omics into a handful of interpretable shared factors, with native missing-value tolerance and per-view variance contributions. What MOFA2 does *not* give us is patient-level clustering: factor scores are continuous, and assigning each patient to a discrete subgroup requires a downstream step (e.g. *k*-means on factor scores). The next chapter covers a method designed natively for that goal: **Similarity Network Fusion**, which works on patient-level similarity matrices rather than feature decompositions.
+
+In the [next chapter](../05_snf/snf.qmd) we keep the same dataset but switch to **SNF**, a network-based method that fuses per-block patient similarity matrices into a single consensus network suitable for spectral clustering.

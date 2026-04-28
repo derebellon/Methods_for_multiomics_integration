@@ -1,0 +1,287 @@
+---
+title: "Tutorial 5 — WGCNA"
+subtitle: "Feature-network integration via co-expression modules"
+image: ../assets/thumb_wgcna.png
+---
+
+# Weighted Gene Co-expression Network Analysis (WGCNA)
+
+## Where this method fits in the multi-omics landscape
+
+WGCNA [@langfelder2008wgcna] is the canonical method for **feature × feature network analysis**. It is the structural mirror of SNF: where SNF builds patient × patient networks per block and fuses them, WGCNA builds feature × feature networks and identifies *modules* of co-varying features within a block. Multi-omics integration in WGCNA is achieved post hoc by **correlating module eigengenes across blocks**.
+
+| Property            | SNF                    | **WGCNA**                          |
+|---------------------|------------------------|-------------------------------------|
+| Network nodes       | Patients               | **Features (genes, miRNAs, CpGs)** |
+| Output              | Patient clusters       | **Feature modules + eigengenes**   |
+| Multi-omics handling| Native (fuse networks) | **Post hoc** (correlate eigengenes)|
+| Best at             | Subtype discovery      | **Pathway / module discovery**     |
+
+Use WGCNA when the goal is to compress thousands of features into a handful of biologically meaningful modules, and when **mechanistic interpretation** at the pathway level matters.
+
+## The biological problem we are solving here
+
+Same 671 patients, focusing on the mRNA block (with the methylation block for cross-omics validation). We ask:
+
+1. **Are there sets of genes that vary together across patients (modules) and that we can summarise with a single number per patient (the module eigengene)?**
+2. **Do those module eigengenes correlate with PAM50 subtype, with patient survival, or with the methylation status of nearby CpGs?**
+
+WGCNA gives you both: it produces the modules, the eigengenes, and the diagnostic plots needed to evaluate module quality.
+
+## Intuition before any equation
+
+Genes that share a transcriptional programme co-vary across patients. WGCNA exploits this by:
+
+1. **Compute pairwise gene-gene correlations** across patients. This is an $O(p^2)$ operation — feasible for $p \approx 5{,}000$, painful above $p \approx 20{,}000$.
+2. **Raise the absolute correlations to a power $\beta$**, transforming a correlation matrix into a *weighted adjacency matrix* with a scale-free network topology.
+3. **Compute the Topological Overlap Matrix (TOM)**: a refined similarity in which two genes are similar not only because they correlate but because they share many common neighbours.
+4. **Hierarchically cluster genes** on $1 - \text{TOM}$ and cut the dendrogram dynamically to obtain modules. Each module receives an arbitrary colour as its label (turquoise, blue, brown, ...).
+5. **Summarise each module by its eigengene** (the first principal component of the genes in that module). Each patient now has one number per module.
+6. **Correlate eigengenes with anything you want**: clinical traits, treatment outcomes, methylation values from another block, microbiome composition, etc.
+
+## Mathematical formulation
+
+Let $X \in \mathbb{R}^{n \times p}$ be the gene-expression matrix. The signed weighted adjacency between genes $i$ and $j$ is
+
+$$
+a_{ij} = \left( \frac{1 + \mathrm{cor}(x_i, x_j)}{2} \right)^{\beta}
+$$
+
+The TOM is
+
+$$
+\mathrm{TOM}_{ij} = \frac{\sum_u a_{iu}\,a_{uj} + a_{ij}}{\min\!\left(\sum_u a_{iu},\, \sum_u a_{uj}\right) + 1 - a_{ij}}
+$$
+
+Modules are identified by hierarchical clustering on the dissimilarity $1 - \mathrm{TOM}$. The eigengene of module $M$ is the first principal component of the standardised expression of genes in $M$.
+
+The soft-thresholding power $\beta$ is chosen to make the resulting network approximately *scale-free* (a few hubs, many low-degree nodes), the topology empirically observed in biological networks. WGCNA provides `pickSoftThreshold()` to assist.
+
+## What `WGCNA` expects from us
+
+| Step                   | Function                | Input                        | Output                        |
+|------------------------|-------------------------|------------------------------|-------------------------------|
+| Choose $\beta$         | `pickSoftThreshold(X)`  | matrix samples × features    | recommended power             |
+| Adjacency              | `adjacency(X, power)`   | matrix + power               | $p \times p$ adjacency        |
+| TOM                    | `TOMsimilarity(adj)`    | adjacency                    | $p \times p$ similarity       |
+| Cluster                | `hclust(as.dist(1-TOM))`| dissimilarity                | dendrogram                    |
+| Modules                | `cutreeDynamic(...)`    | dendrogram + dissimilarity   | module labels per gene        |
+| Eigengenes             | `moduleEigengenes()`    | matrix + module labels       | matrix samples × modules      |
+
+::: {.callout-warning}
+## WGCNA expects samples in rows, features in columns
+
+This matches mixOmics and is the OPPOSITE of MOFA2. Always check `dim()`.
+:::
+
+::: {.callout-warning}
+## Computational cost
+
+`adjacency()` and `TOMsimilarity()` are $O(p^2)$ and produce $p \times p$ dense matrices. For $p = 5{,}000$ this is ~200 MB per matrix. For $p = 20{,}000$ you need 3+ GB; use `blockwiseModules()` instead.
+:::
+
+## Canonical workflow on GS-BRCA mRNA
+
+We do the full WGCNA analysis on the mRNA block, then correlate module eigengenes with PAM50 and with the methylation block to demonstrate the multi-omics extension.
+
+### Step 1 — Load and prepare
+
+```{r}
+#| label: load
+#| message: false
+suppressPackageStartupMessages({
+  library(WGCNA)
+  library(ggplot2)
+})
+options(stringsAsFactors = FALSE)
+allowWGCNAThreads()
+
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+
+X <- brca$mRNA               # 671 patients x 5000 genes (samples in rows)
+Y <- brca$labels
+dim(X)
+```
+
+### Step 2 — Choose the soft-thresholding power
+
+```{r}
+#| label: pick-power
+#| cache: true
+#| fig-width: 8
+#| fig-height: 4
+powers <- c(1:10, seq(12, 20, by = 2))
+sft <- pickSoftThreshold(X, powerVector = powers, verbose = 0)
+
+par(mfrow = c(1, 2))
+plot(sft$fitIndices[, 1], -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     xlab = "Soft-threshold power", ylab = "Scale-free fit (R^2)",
+     type = "n", main = "Scale independence")
+text(sft$fitIndices[, 1], -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     labels = powers, col = "darkred")
+abline(h = 0.85, col = "red")
+
+plot(sft$fitIndices[, 1], sft$fitIndices[, 5],
+     xlab = "Soft-threshold power", ylab = "Mean connectivity",
+     type = "n", main = "Mean connectivity")
+text(sft$fitIndices[, 1], sft$fitIndices[, 5], labels = powers, col = "darkred")
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Two panels. Left: **scale-free topology fit ($R^2$)** as a function of the power. We pick the smallest power for which $R^2 \geq 0.85$ (red horizontal line). Right: **mean connectivity** as a function of the power; lower is better, because it indicates the network has the right balance of hubs and leaves. The two criteria converge: pick the smallest power that satisfies both.
+:::
+
+```{r}
+#| label: chosen-power
+beta <- sft$powerEstimate
+if (is.na(beta)) beta <- 6   # fallback if pickSoftThreshold did not converge
+beta
+```
+
+### Step 3 — Build the network and detect modules (block-wise)
+
+For 5,000 features the in-memory adjacency is feasible, but we use the block-wise wrapper for safety and speed.
+
+```{r}
+#| label: modules
+#| cache: true
+net <- blockwiseModules(
+  X,
+  power            = beta,
+  TOMType          = "signed",
+  minModuleSize    = 30,
+  reassignThreshold= 0,
+  mergeCutHeight   = 0.25,
+  numericLabels    = FALSE,
+  verbose          = 0,
+  maxBlockSize     = 6000
+)
+
+table(net$colors)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+`net$colors` is a vector of length $p$ with one entry per gene, valued by an arbitrary colour name (or `"grey"` for genes that did not join any module). The `table()` shows how many genes ended up in each module. Healthy WGCNA runs produce a handful of medium-sized modules (50–500 genes each) plus the `grey` "unassigned" bucket.
+
+If `grey` dominates, the soft-threshold power may be too high (over-shrinking) or the data may not have strong co-variation structure. If you see a single huge module, the cut height is too lenient.
+:::
+
+### Step 4 — Compute module eigengenes
+
+```{r}
+#| label: eigengenes
+ME <- moduleEigengenes(X, colors = net$colors)$eigengenes
+ME <- ME[, colnames(ME) != "MEgrey", drop = FALSE]      # drop unassigned
+ME <- orderMEs(ME)
+dim(ME); head(ME[, 1:3], 5)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+`ME` is a 671 × (number-of-modules) matrix. Each column is the *eigengene* of one module: a single number per patient summarising the activity of that module. From now on, the original 5,000 genes are reduced to (say) 12 module eigengenes that we can correlate with anything.
+:::
+
+### Step 5 — Correlate eigengenes with PAM50 (multi-omics by another name)
+
+```{r}
+#| label: trait-cor
+#| fig-width: 7
+#| fig-height: 5
+#| fig-cap: "Correlation between module eigengenes (rows) and PAM50 subtypes (columns, one-hot encoded). Cells with strong positive (red) or negative (blue) correlation identify module–subtype associations."
+Y_dummy <- model.matrix(~ Y - 1)   # one-hot encode
+colnames(Y_dummy) <- levels(Y)
+
+cor_mat <- cor(ME, Y_dummy, use = "p")
+p_mat   <- corPvalueStudent(cor_mat, nrow(ME))
+
+text_mat <- paste0(signif(cor_mat, 2), "\n(",
+                   format(p_mat, digits = 1, scientific = TRUE), ")")
+dim(text_mat) <- dim(cor_mat)
+
+par(mar = c(6, 8.5, 3, 3))
+labeledHeatmap(
+  Matrix = cor_mat,
+  xLabels = colnames(Y_dummy),
+  yLabels = rownames(cor_mat),
+  ySymbols = rownames(cor_mat),
+  colorLabels = FALSE,
+  colors = blueWhiteRed(50),
+  textMatrix = text_mat,
+  setStdMargins = FALSE,
+  cex.text = 0.6,
+  zlim = c(-1, 1),
+  main = "Module-PAM50 correlations"
+)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Each cell holds two numbers: the Pearson correlation and (in parentheses) its student-t *p*-value. Red cells indicate a module that is *up* in patients of that subtype; blue cells indicate the opposite. A module with a strong correlation (|r| > 0.4) for one subtype is your candidate for that subtype's mRNA programme.
+
+Cross-checking: the genes inside a module that correlates positively with Basal-like should include classical basal markers (`KRT5`, `KRT14`); a module that correlates negatively with Basal should include luminal markers (`ESR1`, `GATA3`).
+:::
+
+### Step 6 — Cross-omics: correlate mRNA module eigengenes with methylation
+
+```{r}
+#| label: cross-omics
+#| fig-width: 7
+#| fig-height: 4
+#| fig-cap: "Correlation between mRNA module eigengenes (rows) and the top 30 methylation features (columns) by variance. Strong cross-omics correlations identify candidate mechanistic links between transcriptional programmes and DNA methylation."
+top_meth_idx <- order(-apply(brca$methylation, 2, var))[1:30]
+meth_top <- brca$methylation[, top_meth_idx]
+
+cor_xm <- cor(ME, meth_top, use = "p")
+
+par(mar = c(8, 8, 3, 3))
+labeledHeatmap(
+  Matrix = cor_xm,
+  xLabels = colnames(meth_top),
+  yLabels = rownames(cor_xm),
+  ySymbols = rownames(cor_xm),
+  colorLabels = FALSE,
+  colors = blueWhiteRed(50),
+  setStdMargins = FALSE,
+  cex.text = 0.5,
+  zlim = c(-1, 1),
+  main = "mRNA module eigengenes vs top methylation features"
+)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Cells with strong correlations identify candidate **mRNA-module / methylation-feature pairs** that may be mechanistically linked. A negative correlation between a luminal-mRNA module and a CpG in the *FOXA1* or *ESR1* promoter would, for example, support a methylation-mediated regulatory hypothesis. These are *correlations*, not causal claims; orthogonal validation (e.g. CRISPR perturbation, methylation reversal) is required for mechanism.
+:::
+
+## Critical interpretation
+
+::: {.callout-caution}
+## What to look for
+
+- **Module sizes.** Healthy runs produce 5–20 modules with 50–500 genes each, plus the `grey` bucket. A single huge module or many tiny modules indicates parameter problems.
+- **Module–PAM50 correlations.** At least one module should correlate strongly with Luminal-A (low proliferation, ER+ programme), one with Basal-like (basal cytokeratins, EGFR), and ideally one with the proliferation programme that distinguishes LumA from LumB.
+- **Cross-omics validation.** When an mRNA module correlates with the methylation of a known regulator of those mRNAs, the module is *mechanistically* validated. This is the kind of finding that a methods-paper reviewer asks for.
+:::
+
+WGCNA's value in a multi-omics workflow is **interpretability**: a module is a small set of co-varying features that you can name (often by the most central gene), look up in pathway databases, and correlate with anything else. It is the natural complement to feature-level decompositions like sPLS-DA: WGCNA gives you the biology, sPLS-DA gives you the prediction.
+
+## Limitations
+
+- **Not multi-omic at its core.** Multi-omics integration is post hoc, via eigengene correlations. For native multi-block decomposition use DIABLO or MOFA2.
+- **Computationally expensive.** Memory grows as $p^2$. For $p > 20{,}000$ use `blockwiseModules()` with smaller `maxBlockSize`.
+- **Soft-threshold power is a real choice.** Different $\beta$ give different module structures. Always show the `pickSoftThreshold()` plot in supplementary material.
+- **Assumes co-expression implies co-regulation.** Often true, sometimes not (e.g. transient stress responses).
+
+## What this leaves on the table
+
+WGCNA gives us interpretable modules and cross-omics correlations, but cannot model non-linear relationships and does not produce a generative model that would let us simulate or impute. The next chapter, **Variational Autoencoders**, fills both gaps with a deep generative approach.
+
+In the [next chapter](../07_vae/vae.qmd) we build a multi-omics VAE in PyTorch and use the latent space for both visualisation and downstream classification.

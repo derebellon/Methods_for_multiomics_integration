@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: "Methods for Multi-Omics Integration: a tutorial collection"
+message: "If you use these tutorials in academic work, please cite the accompanying paper and this repository."
+type: software
+authors:
+  - family-names: Rebellon-Sanchez
+    given-names: David E.
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+    affiliation: "London School of Hygiene & Tropical Medicine"
+repository-code: "https://github.com/derebellon/Methods_for_multiomics_integration"
+license: MIT
+keywords:
+  - multi-omics
+  - integration
+  - bioinformatics
+  - tutorial
+  - sPLS-DA
+  - DIABLO
+  - MOFA
+  - SNF
+  - WGCNA
+  - variational-autoencoder
+preferred-citation:
+  type: article
+  title: "A practical review of multi-omics integration methods"
+  authors:
+    - family-names: Rebellon-Sanchez
+      given-names: David E.
+  year: 2026
+  notes: "In preparation."

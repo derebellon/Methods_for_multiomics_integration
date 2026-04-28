@@ -1,0 +1,465 @@
+---
+title: "Tutorial 1 — Sparse PLS-DA"
+subtitle: "A single-block primer before we tackle multi-omics integration"
+image: ../assets/thumb_splsda.png
+---
+
+# Sparse PLS-DA
+
+## Where this method fits in the multi-omics landscape
+
+We are honest with you up front: **sparse Partial Least Squares Discriminant Analysis (sPLS-DA), as we will run it in this tutorial, is not multi-omics integration.** It takes a *single* omic block at a time (here, mRNA) and tries to discriminate clinical classes from it. If your only goal is to read about methods that take several omic layers and fuse them into a single model, you can jump straight to the [DIABLO chapter](../03_diablo/diablo.qmd) and come back here only if anything looks unfamiliar.
+
+So why is the very first tutorial in a multi-omics integration repository about a single-block method? Three reasons.
+
+First, **DIABLO is sPLS-DA with extra machinery on top.** DIABLO (next chapter) extends sPLS-DA so that the same kind of sparse latent decomposition runs on several blocks simultaneously, with cross-block correlation constraints on top. If you have not built intuition for what sPLS-DA does on one block, the multi-block extension will look like algebra soup. A reader who walks into DIABLO already knowing what `keepX` does, what a *loading vector* means, and what `plotIndiv()` shows learns the integration part roughly twice as fast.
+
+Second, **the same logic applies to several other methods on this site.** MOFA2 is a Bayesian generalisation of factor analysis on multiple blocks; understanding the single-block linear case first makes the multi-block Bayesian case much less scary. Network fusion (SNF) does not factorise blocks but it does compute per-block similarity matrices that then get averaged; the question of *what each block contributes* is the same question sPLS-DA asks on its first component.
+
+Third, **single-omic baselines are part of the methodological story of any multi-omics paper.** When you submit a paper claiming that integrating four omics layers helped, the first question a reviewer asks is *"compared to what?"*. The answer almost always starts with sPLS-DA on the strongest single block. Knowing how to run that comparison cleanly is part of the multi-omics workflow even when sPLS-DA itself is not the headline method.
+
+With those three reasons declared, the rest of this chapter is a careful walk through sPLS-DA on the mRNA block of GS-BRCA, written so that the next chapter (DIABLO) can move quickly through the parts you have already seen.
+
+## The biological problem we are solving here
+
+Suppose a colleague hands us 671 breast cancer patients. For each one she has measured the expression of 5,000 genes, and a pathologist has assigned each tumour to one of five PAM50 intrinsic subtypes (Luminal A, Luminal B, HER2-enriched, Basal-like, Normal-like) [@parker2009pam50]. She asks us two coupled questions:
+
+1. **Can we project the patients onto a small number of axes such that the five subtypes form distinguishable clouds?**
+2. **Which genes drive that separation?**
+
+A useful answer is something a clinician can read in two figures: a 2-D scatter plot in which subtypes form separate clouds, and a short ranked list of genes that explains why. We want to obtain both at once, using one method, and we want the method to **drop genes that contribute nothing** rather than diluting the interpretation across all 5,000 weights.
+
+That description is the recipe for sPLS-DA.
+
+## Intuition before any equation
+
+Picture the 671 patients as a cloud of dots in 5,000-dimensional space (one axis per gene). Standard *Principal Component Analysis* (PCA) would rotate the axes of that cloud to align with directions of maximum variance, completely ignoring which subtype each patient belongs to. Some of those PCA axes might happen to separate subtypes, but that would be luck.
+
+*Partial Least Squares Discriminant Analysis* (PLS-DA) does something more deliberate: it rotates the axes so that, **along the new axes, patients of the same subtype sit close together and patients of different subtypes sit far apart.** The rotation is encoded in a weight vector, which we call $w$. Each gene receives a weight, and a patient's "score" on the new axis is the weighted sum of their gene-expression values.
+
+If we let $w$ have a non-zero weight for every single gene, we end up with a model that uses 5,000 genes and is impossible to interpret biologically. The "sparse" in sPLS-DA fixes that. A penalty (an L1, or *lasso*, penalty) forces most weights to be exactly zero, leaving only a handful of genes (we choose how many) with non-zero weight. Those are the **selected features**: the short biomarker list we promised the colleague.
+
+We can then extract a *second* axis, then a *third*, each one orthogonal to the previous and selecting its own short list of genes. A model with three components is therefore a 3-D projection of the original 5,000-D cloud, anchored on three short, partly disjoint gene lists.
+
+## A glossary you will need
+
+Before the equations and the code, here are the recurring terms we will use. None of these are unique to mixOmics; they are standard latent-variable model vocabulary.
+
+::: {.callout-note}
+## Quick glossary
+
+- **Component / latent variable / variate.** A new axis built as a weighted combination of the original features. *PC1* (first principal component), *Component 1* and *latent variable 1* all refer to the same idea in different libraries.
+- **Score / variate value.** The numeric position of a single patient on a component. With three components and 671 patients you obtain a 671 × 3 matrix of scores.
+- **Loading.** The weight assigned to one feature on one component. A loading of zero means that feature is not used by that component.
+- **`keepX`.** The number of non-zero loadings to retain per component (the convenient way to control the L1 sparsity penalty in mixOmics).
+- **`ncomp`.** The number of components to compute.
+- **Cross-validation (CV).** A procedure that splits the data into folds, fits the model on most folds, evaluates on the held-out fold, and repeats. *5-fold CV* repeats this 5 times. *Stratified* CV ensures each fold preserves the class proportions of the full dataset.
+- **`nrepeat`.** Number of independent repeats of the full CV procedure with different random seeds. Higher = more stable estimate, slower.
+- **Balanced Error Rate (BER).** Mean of the per-class error rates. With imbalanced classes, BER is a fairer summary than overall accuracy: a classifier that always predicts the majority class scores 0% accuracy on every minority class and BER reflects that.
+- **`max.dist`.** A prediction rule used by `mixOmics`: a new patient is assigned to the class whose centroid is closest in component space, using a maximum-distance criterion. Other options are `centroids.dist` and `mahalanobis.dist`; `max.dist` is the documented default for sPLS-DA.
+- **`perf()`.** mixOmics function that re-runs cross-validation on a *fixed* model (after tuning) to give an honest performance estimate, including per-class error.
+:::
+
+## Mathematical formulation
+
+With the intuition and the glossary in hand, the equations are short. Let $X \in \mathbb{R}^{n \times p}$ be the gene-expression matrix with $n = 671$ patients in rows and $p = 5{,}000$ genes in columns, centred and scaled per gene. Let $Y \in \{0,1\}^{n \times K}$ be a one-hot encoding of the $K = 5$ subtypes (a column per subtype, with a 1 marking each patient's class).
+
+PLS-DA finds successive pairs of weight vectors $(w_h, c_h)$ that maximise the covariance between the projected patient scores [@barker2003pls]:
+
+$$
+\max_{w,\,c}\; \mathrm{Cov}(Xw,\,Yc) \quad \text{s.t.} \quad \|w\|_2 = \|c\|_2 = 1.
+$$
+
+Read in plain English: find the gene-weight vector $w$ and the class-weight vector $c$ such that the patient scores on $X$ ($Xw$) and the patient scores on $Y$ ($Yc$) move together as much as possible, with both vectors normalised so the problem has a unique solution.
+
+Sparse PLS-DA adds the L1 penalty on the gene weights to perform variable selection [@lecao2008splsda]:
+
+$$
+\max_{w,\,c}\; \mathrm{Cov}(Xw,\,Yc) - \lambda \|w\|_1 \quad \text{s.t.} \quad \|w\|_2 = \|c\|_2 = 1.
+$$
+
+In `mixOmics` you do not tune $\lambda$ directly. Instead you set `keepX`, the *number* of non-zero weights to keep on each component; the package picks $\lambda$ internally to land exactly that many features. This is the same convenience that `glmnet` offers via `dfmax`, and it is much easier to interpret than a free parameter $\lambda$.
+
+Successive components $h = 1, 2, \ldots, H$ are extracted from the residual matrices left after projecting out previous components, so the components are mutually uncorrelated.
+
+## Toy example by hand
+
+Throwing 671 patients at the algorithm before we have seen what it does would be a leap of faith. So before we touch the real data, we run sPLS-DA on a five-patient toy where we already know the answer. If the algorithm cannot recover the obvious answer here, something is wrong.
+
+The toy has five patients, four features, and two classes. By construction:
+
+- Feature 1 separates the classes cleanly (large positive in class A, large negative in class B).
+- Feature 2 separates them weakly in the same direction.
+- Features 3 and 4 are pure noise.
+
+We will ask sPLS-DA to keep only **two features** on the first component and we expect it to pick features 1 and 2 and assign features 3 and 4 a loading of exactly zero.
+
+```{r}
+#| label: toy-data
+set.seed(1)
+toy_X <- rbind(
+  c( 2.1,  1.0, 0.2,  0.3),   # patient 1, class A
+  c( 1.8,  1.1, 0.9, -0.4),   # patient 2, class A
+  c( 2.0,  1.2, 0.1, -0.1),   # patient 3, class A
+  c(-1.9, -1.0, 0.0,  0.5),   # patient 4, class B
+  c(-2.0, -0.9, 0.2, -0.2)    # patient 5, class B
+)
+colnames(toy_X) <- paste0("feat", 1:4)
+rownames(toy_X) <- paste0("p", 1:5)
+toy_Y <- factor(c("A","A","A","B","B"))
+toy_X
+```
+
+We fit sPLS-DA with one component and `keepX = 2`:
+
+```{r}
+#| label: toy-fit
+suppressPackageStartupMessages(library(mixOmics))
+toy_fit <- splsda(X = toy_X, Y = toy_Y, ncomp = 1, keepX = 2)
+loadings(toy_fit)$X
+```
+
+::: {.callout-tip}
+## How to read this output
+
+The table has one row per feature and one column per component. Each cell is a *loading*. The package picks `feat1` and `feat2` (similar loadings, roughly $-0.71$ each) and assigns `feat3` and `feat4` a loading of **exactly zero**. The L1 penalty does what it claims. The toy passes.
+:::
+
+Just to close the loop, here is the projection of the five patients onto the first component:
+
+```{r}
+#| label: toy-projection
+#| fig-cap: "Toy data projected on the first sPLS-DA component. Patients of the same class collapse onto similar scores."
+toy_scores <- predict(toy_fit, newdata = toy_X)$variates[, 1]
+plot(toy_scores, rep(0, 5),
+     col = c("steelblue","steelblue","steelblue","tomato","tomato"),
+     pch = 19, cex = 2, xlab = "Component 1 score", ylab = "", yaxt = "n",
+     main = "Toy projection: classes A vs B")
+text(toy_scores, 0.05, rownames(toy_X))
+abline(v = 0, lty = 2)
+```
+
+Class A patients land together on one side of zero, class B on the other. The same algorithm we just verified on five patients is what we now apply to 671.
+
+## What `mixOmics::splsda()` expects from us
+
+Before the first real call, it is worth being explicit about the data contract. Reading the `?splsda` help and the maintainer's tutorials at [mixomics.org](http://mixomics.org/methods/spls-da/), the function expects:
+
+| Input   | Required form                                                                |
+|---------|------------------------------------------------------------------------------|
+| `X`     | Numeric matrix or data frame, **samples in rows, features in columns**, no `NA`. |
+| `Y`     | A factor of length `nrow(X)`. Two or more levels.                            |
+| `ncomp` | The number of components to compute (1, 2, 3, ...).                          |
+| `keepX` | An integer vector of length `ncomp`: how many features to keep on each component. |
+
+It does **not** require pre-scaling or centering; `splsda()` performs that internally. It does not require log transformation either: if your matrix contains raw counts, log-transform them upstream (e.g. with `DESeq2::vst()`). The mRNA matrix in MLOmics is already log-converted, so we feed it as is.
+
+Two operational points worth flagging because they trip up first-time users:
+
+::: {.callout-warning}
+## Orientation matters and the error message does not always tell you that
+
+MLOmics ships every CSV with features in rows and samples in columns. Feeding that directly to `splsda()` would silently treat genes as samples. Our `load_mlomics_brca()` helper transposes for us; if you ever bring your own data in, double-check `dim(X)` and `length(Y)` agree.
+:::
+
+::: {.callout-warning}
+## No missing values allowed
+
+`splsda()` errors if `X` has any `NA`. The `Top` MLOmics matrices are complete, but if you bring your own data, impute or drop before calling.
+:::
+
+## Canonical workflow on GS-BRCA mRNA
+
+We can now run the real analysis. We work through it in seven steps that mirror the order in which the maintainers of `mixOmics` recommend running an sPLS-DA analysis [@rohart2017mixomics]:
+
+1. Load the data.
+2. Fit a baseline model with arbitrary `keepX` so we have something to look at.
+3. Tune `ncomp` and `keepX` properly, by stratified cross-validation.
+4. Re-fit the final model with the tuned values.
+5. Look at the sample plot.
+6. Look at the variable plot and the selected genes.
+7. Re-estimate the cross-validated error on the final model with `perf()`, so we have an honest performance number.
+
+Each step has its own chunk and a paragraph explaining what we expect to see before we run it.
+
+### Step 1 — Load the data
+
+Nothing surprising here. The helper takes care of orientation, label decoding and ID alignment so that `X` is patients-in-rows and `Y` is a factor of PAM50 subtypes.
+
+```{r}
+#| label: load
+#| message: false
+suppressPackageStartupMessages({
+  library(mixOmics)
+  library(ggplot2)
+})
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+
+X <- brca$mRNA          # 671 patients x 5000 genes
+Y <- brca$labels        # factor with PAM50 subtypes
+dim(X); table(Y)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+`dim(X)` confirms the orientation contract: 671 rows (patients) by 5,000 columns (genes). `table(Y)` reports the class counts: 353 LumA, 132 LumB, 113 Basal, 42 Her2, 31 Normal. Note the imbalance — this dictates two design choices later: stratified cross-validation folds, and balanced error rate (BER) instead of plain accuracy.
+:::
+
+### Step 2 — Fit a baseline model with arbitrary `keepX`
+
+We do not yet know what the right `keepX` is, but a fit with any reasonable default gives us *something to look at*. This is exactly the workflow recommended in the mixOmics tutorials: fit first, tune second.
+
+```{r}
+#| label: baseline-fit
+fit0 <- splsda(X, Y, ncomp = 3, keepX = c(50, 50, 50))
+fit0
+```
+
+::: {.callout-tip}
+## How to read this output
+
+The print method tells us how many features were retained per component (50 for each, as we asked) and the dimensions of the input. We will not interpret this fit further; it is scaffolding while we set up tuning.
+:::
+
+### Step 3 — Tune `ncomp` and `keepX` with stratified cross-validation
+
+`tune.splsda()` repeats the model fit on different folds of the data, varies `keepX` over a small grid, and reports the cross-validated balanced error rate per `keepX` and per component. We use **balanced error rate** rather than accuracy because LumA represents 53% of the cohort: a trivial classifier that always predicts LumA would get 53% accuracy but ~80% BER (almost everything wrong on every other class).
+
+We use 5-fold cross-validation, which the mixOmics maintainers recommend as a balance between bias and variance, and we repeat it 3 times to stabilise the estimate. For a paper-quality estimate you would bump `nrepeat` to 10 or more; for a tutorial, 3 is enough to make the choice of `keepX` reliable.
+
+```{r}
+#| label: tune
+#| cache: true
+set.seed(42)
+test_keepX <- c(10, 25, 50, 100, 200)
+
+tuned <- tune.splsda(
+  X, Y,
+  ncomp      = 3,
+  test.keepX = test_keepX,
+  validation = "Mfold",
+  folds      = 5,
+  nrepeat    = 3,
+  dist       = "max.dist",
+  measure    = "BER",
+  progressBar = FALSE
+)
+
+best_ncomp <- tuned$choice.ncomp$ncomp
+best_keepX <- tuned$choice.keepX[seq_len(best_ncomp)]
+list(best_ncomp = best_ncomp, best_keepX = best_keepX)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+`tuned$choice.ncomp$ncomp` is the number of components the package recommends keeping. `tuned$choice.keepX` is the corresponding number of features to retain per component. In our run: 3 components, with `keepX = (25, 200, 25)`. The fact that component 2 wants 200 features while components 1 and 3 are happy with 25 is a content-rich signal — it tells us component 2 captures a more diffuse biological signature (we will see below it is the proliferation programme).
+:::
+
+```{r}
+#| label: tune-plot
+#| fig-cap: "Cross-validated balanced error rate as a function of `keepX`, separately for the model that uses only component 1, components 1 to 2, and components 1 to 3. Solid diamonds mark the chosen `keepX` per component."
+plot(tuned)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Three lines, one per cumulative component count. The y-axis is BER (lower is better). The x-axis is `keepX` on log scale. Three lessons jump out:
+
+- **Component 1 alone barely helps.** BER stays around 0.60 regardless of how many genes you keep. That is the signature of a problem that cannot be solved on a single axis: in this case, a five-class problem with a clear binary backbone (luminal vs basal) plus three classes squeezed in between.
+- **Component 2 helps a bit.** BER drops to about 0.50 with 200 features.
+- **Component 3 is the inflection point.** BER drops further to about 0.35.
+
+The diamonds mark the chosen `keepX` per component. Where the line plateaus or rises again, adding more features does not help and may overfit.
+:::
+
+### Step 4 — Fit the final model
+
+```{r}
+#| label: final-fit
+final <- splsda(X, Y, ncomp = best_ncomp, keepX = best_keepX)
+```
+
+This is the model we interpret in the rest of this chapter.
+
+### Step 5 — Sample plot in component space
+
+The sample plot is the figure most reviewers will look at first: it shows whether subtypes form separable clouds in the new low-dimensional space.
+
+```{r}
+#| label: plot-indiv
+#| fig-cap: "Patients projected onto the first two sPLS-DA components. Ellipses are 95% confidence regions per subtype. The percentages on the axes report variance explained, which is low because the data is high-dimensional and most variance is biologically irrelevant noise."
+plotIndiv(
+  final,
+  comp     = c(1, 2),
+  group    = Y,
+  ind.names = FALSE,
+  ellipse  = TRUE,
+  legend   = TRUE,
+  title    = "sPLS-DA on GS-BRCA mRNA",
+  size.title = rel(1)
+)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Each dot is one patient; colour and shape encode PAM50 subtype. The ellipses are 95% confidence regions per class assuming a bivariate normal distribution of scores; *they overlap when classes are not separable on these two axes*. Two things to notice:
+
+- **The axis labels say "8% expl. var" and "5% expl. var".** That is normal in HDLSS data and is **not** a sign of failure: most of the 5,000 genes carry variance unrelated to PAM50 subtype. What matters is that *the small variance that is captured aligns with the clinical labels*, which it visibly does.
+- **LumA (pink) sits clearly to the left of zero on component 1; Basal (green) clearly to the right.** Component 1 has reproduced the most fundamental biological split in breast cancer (oestrogen-receptor positive vs oestrogen-receptor negative), without ever being told what oestrogen receptor is. The model rediscovered known biology — a strong sanity check.
+- **HER2 (orange), LumB (blue) and Normal (grey) all overlap heavily on these two axes.** Their clouds will only separate on component 3, which the sample plot above does not show.
+:::
+
+### Step 6 — Variable plot and selected genes
+
+The question now shifts from *do the subtypes separate?* to *which genes drive that separation?*. The correlation circle (`plotVar()`) places each selected gene on a unit circle whose axes are the components: a gene close to the unit circle is well represented by the components, and its angle indicates the subtype it discriminates.
+
+```{r}
+#| label: plot-var
+#| fig-cap: "Correlation circle for the genes selected on components 1 and 2. Genes near the unit circle are well represented; their angle indicates which subtype they discriminate."
+plotVar(final, comp = c(1, 2), cutoff = 0.5, cex = 3)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+The two concentric circles mark correlation magnitudes of 0.5 and 1.0 between each gene and the components. Genes touching the outer circle are *strongly* correlated with the component they point to; genes near the centre carry weak signal. Direction matters: genes pointing to opposite sides of a component are *anti-correlated* with each other across patients.
+:::
+
+The exact list of selected genes per component, with their loadings, is one function call away. We print the top 15 of component 1 to keep the output readable:
+
+```{r}
+#| label: selected-vars
+selected_c1 <- selectVar(final, comp = 1)$value
+head(selected_c1, 15)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+One row per selected gene, ordered by absolute loading. **Loadings carry a sign**: negative loadings mean the gene goes *up* in patients with negative component-1 scores (the LumA side of the sample plot); positive loadings mean the gene goes up on the Basal side. The biology of this list is discussed in the *Critical interpretation* section below.
+:::
+
+A complementary view is `plotLoadings()`, which colours each bar by the subtype with the largest median expression. This is a quick way to see which subtype a gene "belongs to" without reading the loading sign manually.
+
+```{r}
+#| label: plot-loadings
+#| fig-width: 8
+#| fig-height: 6
+#| fig-cap: "Top 20 genes selected on component 1, coloured by the subtype with the largest median expression."
+plotLoadings(
+  final,
+  comp     = 1,
+  method   = "median",
+  contrib  = "max",
+  ndisplay = 20,
+  size.title = rel(1)
+)
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Each bar is one selected gene; bar length and direction encode the loading; bar colour identifies the subtype with the highest median expression for that gene (the `contrib = "max"` option). A useful subtlety: the colour does not tell you which subtype the gene "belongs to" intuitively. *ESR1* and *GATA3* are universally regarded as luminal markers, but here they appear coloured as Luminal B because LumB tumours have slightly higher ESR1/GATA3 medians than LumA in TCGA. The colour reports an empirical fact about *this dataset*, not the canonical association.
+:::
+
+### Step 7 — Honest performance estimate with `perf()`
+
+`tune.splsda()` already gave us a cross-validated error number, but it estimated it during the search. To report a clean performance number on the *final* model we re-run cross-validation on that model alone with `perf()`. We also break the error down by class, because with imbalanced data the average can be misleading.
+
+```{r}
+#| label: perf
+#| cache: true
+set.seed(42)
+cv <- perf(
+  final,
+  validation = "Mfold",
+  folds      = 5,
+  nrepeat    = 3,
+  dist       = "max.dist",
+  progressBar = FALSE
+)
+cv$error.rate$BER
+cv$error.rate.class$max.dist
+```
+
+::: {.callout-tip}
+## How to read these two tables
+
+**`cv$error.rate$BER`** has one row per cumulative component count and one column per prediction rule (`max.dist` is the only one we asked for). Each cell is the cross-validated balanced error rate. Lower is better. A useful baseline: a uniform random classifier on five classes would score BER = 0.80; a perfect classifier scores 0.00.
+
+**`cv$error.rate.class$max.dist`** breaks the error down further: one row per *class*, one column per component count. Each cell is the per-class error rate (1 − recall for that class). This table is where the model is honest about which subtypes it can and cannot distinguish. A row with a 1.000 anywhere means *the model never predicted this class correctly* in the corresponding component-count regime.
+:::
+
+## Critical interpretation of our run
+
+The headline numbers are: 3 components, `keepX = (25, 200, 25)`, BER = 0.35. Taken alone, that 0.35 looks unimpressive. The per-class table is what makes the result interesting.
+
+### Component 1 captures the luminal-vs-basal axis (and almost nothing else)
+
+The top five genes on component 1 — `MLPH`, `GATA3`, `ESR1`, `PSAT1`, `SLC44A4` — together reproduce the most fundamental biological split in breast cancer. *MLPH*, *GATA3*, *ESR1*, *SLC44A4* and *SLC7A8* (negative loadings) are classical luminal-lineage markers; *PSAT1*, *PPP1R14C* and *EN1* (positive loadings) mark Basal-like biology. The sample plot confirms it visually: LumA sits clearly on the left, Basal clearly on the right.
+
+The per-class CV error after component 1 alone is the cleanest illustration of what this component does:
+
+| Subtype | Error after C1 |
+|---------|----------------|
+| LumA    | 0.005          |
+| Basal   | 0.009          |
+| Her2    | 1.000          |
+| LumB    | 1.000          |
+| Normal  | 1.000          |
+
+A single component already classifies LumA and Basal almost perfectly **and** assigns *every other class* incorrectly. Component 1 is not a bad component; it is just answering a binary question on a five-class problem. **In research-question terms**: with mRNA alone we can confidently tell whether a tumour is luminal-A-like or basal-like, and we cannot tell anything else yet.
+
+::: {.callout-caution}
+## What this would mean for a translational decision
+
+If a clinician used the component-1 score alone, she would correctly triage LumA and Basal patients and **mis-classify all HER2 and Normal-like patients as luminal**. That is dangerous, because HER2 patients need anti-HER2 therapy that LumA patients do not. The takeaway is not that the model is bad; it is that *one component is not enough* and the methodology must report multi-component performance to be clinically meaningful.
+:::
+
+### Component 2 captures the proliferation programme
+
+The top genes on component 2 read like a textbook list of cell-cycle and chromosome-segregation regulators: `TOP2A`, `UBE2T`, `UBE2C`, `TPX2`, `NUSAP1`, `KIF4A`, `KIF11`, `CDC25C`. These are the genes that drive the proliferation index used in commercial breast cancer panels (Oncotype DX, MammaPrint). Adding component 2 splits the luminal cohort along proliferation: low-proliferation tumours (Luminal A) move to one end, high-proliferation tumours (Luminal B and aggressive HER2) move to the other.
+
+The CV error on Luminal B falls from 1.00 to 0.45 with this component. HER2 and Normal-like remain at 1.00 — proliferation alone does not discriminate them.
+
+::: {.callout-caution}
+## What this would mean for a methods paper
+
+A reviewer who asks "what does your second component buy you, biologically?" can be answered with a single sentence: *"a graded proliferation axis that recovers the prognostic genes used in standard-of-care commercial panels."* That is a strong answer. It is also a check that nothing pathological is happening, because a component-2 dominated by random batch effects would not match a known biology.
+:::
+
+### Component 3 captures the HER2 amplicon
+
+Component 3 retrieves a small, focused signature: `MPHOSPH6`, `CLCA2`, `PGAP3`. *PGAP3* sits on chromosome 17q12, inside the canonical HER2 amplicon. *ERBB2* itself is not in the MLOmics Top features for this run, but a gene one neighbourhood away on the same amplicon carries the same signal. The HER2 error finally falls from 1.00 to 0.25.
+
+### Where the method gives up: Normal-like
+
+Normal-like remains at 1.00 error across all three components. There are two reasons. First, only 31 patients are in this class — very little signal to learn from across folds. Second, Normal-like tumours are defined by *low* expression of all proliferation and lineage markers — that is, by *absence* of signal. A model that selects features on the basis of which subtype expresses them most strongly cannot easily represent "low everywhere" as a positive feature.
+
+::: {.callout-caution}
+## What this would mean for the multi-omics integration argument
+
+This is the pedagogical hook for the next chapter. Together with the unimpressive 0.35 BER, it tells us that **single-omic sPLS-DA has a natural ceiling** on this problem. Multi-block methods that look at methylation and copy-number simultaneously can pick up the genome-wide hypomethylation that defines Basal, the focal HER2 amplification that defines HER2 (now seen *directly* rather than via amplicon neighbours), and the *quiet* methylation profile that defines Normal-like — even when mRNA alone misses them. We will measure exactly this gain in the DIABLO chapter.
+:::
+
+## Limitations
+
+A short, honest summary of what sPLS-DA cannot do for you:
+
+- **Linear method.** It cannot capture interactions or threshold effects. If the biology is non-linear (a gene matters only above a certain expression level), sPLS-DA misses it.
+- **Single block, as used here.** To integrate mRNA with miRNA, methylation and CNV simultaneously, we need DIABLO (next chapter).
+- **Sensitive to scale.** Features with very different variances dominate the components unless data is centred and scaled. `mixOmics` does this internally, but exotic upstream pre-processing can break it.
+- **No tolerance for missing values.** `splsda()` errors on `NA`. For block-wise missingness, factor analysis methods (MOFA2) are more appropriate.
+- **Class imbalance can mislead point estimates.** Always inspect `perf()$error.rate.class`, not just the overall mean.
+- **Loadings are not feature importances in a causal sense.** A gene with high loading is correlated with the discriminating axis; whether it *drives* the biology requires independent mechanistic evidence.
+
+## What this leaves on the table
+
+We have a model that classifies LumA and Basal with near-zero error from mRNA alone, identifies the cell-cycle axis on component 2, and recovers the HER2 amplicon on component 3. The price is a 0.35 cross-validated BER and a complete failure on Normal-like.
+
+The natural next question is whether four omics can do what one cannot. In the [next chapter](../03_diablo/diablo.qmd), we keep the same dataset and the same outcome, but we let the model use mRNA, miRNA, methylation and CNV simultaneously. The method, DIABLO, is sPLS-DA extended to multiple blocks with cross-block correlation constraints. Everything you have learnt about `keepX`, loadings and `plotIndiv()` carries over directly.

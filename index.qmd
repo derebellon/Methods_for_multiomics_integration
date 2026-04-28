@@ -1,0 +1,81 @@
+---
+title: "Methods for Multi-Omics Integration"
+subtitle: "Practical, reproducible tutorials on the major methodological families"
+listing:
+  - id: tutorial-grid
+    contents:
+      - 02_splsda/splsda.qmd
+      - 03_diablo/diablo.qmd
+      - 04_mofa2/mofa2.qmd
+      - 05_snf/snf.qmd
+      - 06_wgcna/wgcna.qmd
+      - 07_vae/vae.qmd
+    type: grid
+    grid-columns: 3
+    fields: [title, subtitle, image]
+    sort: "filename"
+    sort-ui: false
+    filter-ui: false
+---
+
+# About this site
+
+This site is the **supplementary material** to the methodological review *"A practical review of multi-omics integration methods"* (Rebellon-Sanchez, in preparation) and to Chapter 1 of the corresponding doctoral thesis at the London School of Hygiene & Tropical Medicine. The review can be read on its own. This site exists for the reader who finishes the review and asks the next, very reasonable question: *"all right, but how do I actually run any of this on my own data?"*.
+
+Rather than answering with abstract code snippets, the seven tutorials here run the major families of multi-omics integration methods **end-to-end on a single public dataset** ([MLOmics GS-BRCA](01_dataset/dataset.qmd) [@yang2025mlomics]), so the reader can compare what each method does to the same patients with their own eyes.
+
+::: {.callout-note}
+## Who these tutorials are written for
+
+PhD students, bioinformaticians, statisticians and clinical researchers who have a basic R or Python background but have never touched multi-omics integration. We define every acronym, every metric and every output the first time it appears, and we walk the reader from one section to the next instead of dropping them into a chunk of code without context.
+:::
+
+## The nine-section template
+
+Every tutorial follows the same structure so you can navigate them by section heading rather than re-learning the layout each time:
+
+1. **Where this method fits** in the multi-omics landscape (with an honest answer to *"is this method itself integration or a building block?"*).
+2. **The biological problem** it solves, in plain language.
+3. **Intuition before any equation** — what is the algorithm trying to maximise or minimise?
+4. **Mathematical formulation** with consistent notation across the site.
+5. **Toy example by hand** on a tiny dataset you can read in one glance.
+6. **Library requirements** — exact data format, sample/feature orientation, transformations.
+7. **Canonical workflow** using the library's documented API.
+8. **Reading the outputs** — every metric and figure defined and interpreted critically.
+9. **Limitations**, before you take the method to your own data.
+
+## The order is pedagogical, not by impact
+
+::: {.callout-tip}
+## You can jump straight to any tutorial
+
+Each folder in the [GitHub repository](https://github.com/derebellon/Methods_for_multiomics_integration) is self-contained, and the sidebar on the left gets you to any tutorial in one click. The order below is the *recommended* reading order, not a hard requirement.
+:::
+
+1. **[sPLS-DA](02_splsda/splsda.qmd)** — single-omic supervised method. **Not multi-omics integration in itself**, but the algorithmic core of DIABLO and the right place to learn how sparse latent-variable models work before adding the multi-block machinery.
+2. **[DIABLO](03_diablo/diablo.qmd)** — the multi-block extension of sPLS-DA. *This is where multi-omics integration starts.*
+3. **[MOFA2](04_mofa2/mofa2.qmd)** — Bayesian latent-factor integration with mixed likelihoods and missing-data tolerance.
+4. **[SNF](05_snf/snf.qmd)** — patient-similarity-network fusion, the network family.
+5. **[WGCNA](06_wgcna/wgcna.qmd)** — feature-network integration, focused on co-expression modules.
+6. **[VAE](07_vae/vae.qmd)** — non-linear deep generative integration.
+
+A final [comparative chapter](08_comparison/comparison.qmd) applies the same six methods to the harder problem of subtype discovery in nine rare-cancer datasets in MLOmics, and reports concordance and survival-stratification performance.
+
+## Reproducing everything
+
+```{.bash}
+git clone https://github.com/derebellon/Methods_for_multiomics_integration.git
+cd Methods_for_multiomics_integration
+Rscript -e 'renv::restore()'
+quarto render
+```
+
+You also need to download the dataset once (~186 MB). Instructions are in the [Dataset chapter](01_dataset/dataset.qmd).
+
+## How this site was built
+
+The tutorials and the supporting code were drafted by **David E. Rebellon-Sanchez** in collaboration with **Anthropic's Claude Opus 4.7**, used as a writing and pair-programming assistant, with reference to the official documentation of each library. Every code chunk follows the canonical API documented by the original library authors. The intellectual responsibility for the content rests with the author.
+
+## Citation
+
+If these tutorials help your work, please cite both the underlying paper and this repository. Details in [`CITATION.cff`](https://github.com/derebellon/Methods_for_multiomics_integration/blob/main/CITATION.cff).

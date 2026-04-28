@@ -1,0 +1,27 @@
+---
+title: "Cross-method comparison"
+subtitle: "Where the methods agree, where they disagree, and what that tells us"
+---
+
+# Cross-method comparison
+
+::: {.callout-important}
+## Status
+
+This chapter is the final one and is written **after** all six method tutorials are stable. It will:
+
+- Re-run each method on the same GS-BRCA dataset under matched cross-validation.
+- Report per-class BER and per-method runtime in a single table.
+- Compare patient embeddings across methods (UMAP overlay).
+- Apply each method to the **nine rare-cancer datasets** in MLOmics for unsupervised consensus subtyping, with log-rank survival validation.
+
+Drafting in progress.
+:::
+
+## Planned content
+
+1. **Methodological matrix.** Side-by-side cell-by-cell comparison of every choice each method makes (linearity, sparsity, missing-value handling, supervised/unsupervised, computational cost).
+2. **Performance on GS-BRCA.** Per-class BER for sPLS-DA, DIABLO, MOFA2 + classifier, SNF + spectral clustering, WGCNA + module-trait, VAE + classifier.
+3. **Patient-level concordance.** Are the patients each method clusters together the same? Compute pairwise adjusted Rand index between method-derived partitions.
+4. **Rare-cancer hypothesis discovery.** For each of ACC, KIRP, KIRC, LIHC, LUAD, LUSC, PRAD, THCA, THYM — apply the unsupervised methods, identify consensus subtypes, validate against TCGA survival.
+5. **Practical recommendation.** A flowchart that tells a reader: given your sample size, your data types and your scientific question, which method should you pick first?

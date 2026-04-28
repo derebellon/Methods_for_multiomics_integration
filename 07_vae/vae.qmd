@@ -1,0 +1,313 @@
+---
+title: "Tutorial 6 — Variational Autoencoder"
+subtitle: "Deep generative integration of multi-omics"
+image: ../assets/thumb_vae.png
+---
+
+# Variational Autoencoders for Multi-Omics
+
+## Where this method fits in the multi-omics landscape
+
+Variational Autoencoders (VAEs) [@kingma2014vae] occupy the *non-linear, deep generative, latent-variable* corner of the methodological landscape. They are the closest deep-learning equivalent to MOFA2: both extract a low-dimensional latent representation that summarises high-dimensional multi-omics data, but VAEs do so through neural networks with non-linear activations, allowing them to capture structure that linear methods cannot.
+
+| Property             | MOFA2                    | **VAE**                            |
+|----------------------|--------------------------|-------------------------------------|
+| Linearity            | Linear within each view  | **Non-linear**                      |
+| Inference            | Variational (Gaussian)   | **Variational (neural)**            |
+| Output               | Sparse factors           | **Dense latent embedding**          |
+| Interpretability     | High (per-feature loadings) | **Low** (requires SHAP, attention) |
+| Sample size needed   | Hundreds                 | **Thousands** ideally               |
+| Best at              | Latent factor discovery  | **Pattern discovery, imputation, augmentation** |
+
+VAEs shine when (i) you suspect the relationships between omics are **non-linear**, (ii) you have **enough samples** (typically *n* > 1,000 for reliable training), and (iii) you want a **generative** model that can simulate or impute.
+
+::: {.callout-warning}
+## Honest assessment for our dataset
+
+GS-BRCA has 671 patients. This is on the small side for deep generative models and we should expect a VAE here to *under-perform* the linear methods (MOFA2, DIABLO) we have already seen. We include this tutorial mainly to demonstrate the workflow; for a real multi-omics VAE study you would want at least a few thousand samples or a transfer-learning approach with pretrained weights from a larger cohort.
+:::
+
+## The biological problem we are solving here
+
+Same 671 patients, same four omics. We ask:
+
+1. **Can a non-linear neural network compress 15,366 features per patient into a 32-dimensional latent code that preserves the biology?**
+2. **Does that latent code separate PAM50 subtypes when projected to 2D (e.g. with UMAP)?**
+3. **Can a simple classifier on top of the latent code rival the linear methods?**
+
+## Intuition before any equation
+
+A VAE is an **autoencoder** (input → low-dimensional code → reconstructed input) with a probabilistic twist: instead of mapping each input to a single code, the encoder maps it to a **distribution** over codes (a mean and variance), and the decoder samples from that distribution before reconstructing.
+
+The probabilistic twist matters because it forces the latent space to be *smooth and continuous*: similar inputs map to overlapping distributions, which means decoding from any point in the latent space produces a plausible output. This is what makes a VAE *generative*: you can sample new latent codes and decode them into synthetic patients.
+
+Training balances two competing objectives:
+
+- **Reconstruction loss.** The decoded output should match the input. Pulls the model towards faithful representation.
+- **KL divergence.** The encoder distributions should not stray too far from a standard Gaussian prior. Pulls the model towards a compact, regularised latent space.
+
+Their sum is the **negative ELBO**, the objective minimised during training.
+
+## Mathematical formulation
+
+For each input $x$, the encoder $q_\phi(z \mid x)$ outputs the parameters $(\mu, \sigma)$ of a Gaussian over the latent $z$. The decoder $p_\theta(x \mid z)$ reconstructs $x$ from a sample $z \sim q_\phi$. The training objective is the negative ELBO:
+
+$$
+\mathcal{L}(\phi, \theta; x) = -\underbrace{\mathbb{E}_{q_\phi(z|x)}[\log p_\theta(x \mid z)]}_{\text{reconstruction}} + \beta \cdot \underbrace{D_{\mathrm{KL}}\!\left(q_\phi(z \mid x) \,\Vert\, \mathcal{N}(0, I)\right)}_{\text{regularisation}}
+$$
+
+The hyperparameter $\beta$ controls the trade-off ($\beta = 1$ in standard VAE; $\beta > 1$ encourages disentanglement at the cost of reconstruction). Backpropagation through the random sampling step uses the **reparameterisation trick**: $z = \mu + \sigma \odot \epsilon$ with $\epsilon \sim \mathcal{N}(0, I)$.
+
+## What the multi-omics setup expects from us
+
+We use the simplest multi-omics VAE: concatenate the four blocks into one long input vector per patient, use a feed-forward encoder and decoder. More sophisticated architectures (per-block encoders fused at a bottleneck, e.g. CustOmics or OmiVAE) exist but require code that distracts from the core ideas.
+
+| Input              | Required form                                                            |
+|--------------------|--------------------------------------------------------------------------|
+| `X`                | Numeric matrix, samples in rows, all features standardised (mean 0, sd 1).|
+| `latent_dim`       | Dimensionality of $z$, typically 16-64 for omics.                         |
+| `hidden_dims`      | Hidden-layer sizes for encoder/decoder (e.g. [512, 256]).                |
+| `beta`             | KL weight (default 1.0).                                                 |
+| `epochs`           | Number of training epochs (100-500 typical).                             |
+
+::: {.callout-warning}
+## Standardisation per feature is mandatory
+
+Neural networks are scale-sensitive. Concatenating raw mRNA counts (range $10^0-10^4$) with $\beta$-values (range $0-1$) without standardisation makes training collapse to predicting the mRNA mean.
+:::
+
+## Canonical workflow on GS-BRCA
+
+We use Python via Quarto's native `python` engine, with PyTorch for the model and scikit-learn for the downstream classifier.
+
+### Step 1 — Load and standardise the data (R)
+
+```{r}
+#| label: prep-r
+#| message: false
+suppressPackageStartupMessages(library(reticulate))
+
+source("R/load_mlomics.R")
+brca <- load_mlomics_brca("data/raw/GS-BRCA/Top")
+
+X_concat <- cbind(brca$mRNA, brca$miRNA, brca$methylation, brca$cnv)
+X_scaled <- scale(X_concat)         # z-score per feature
+y_int <- as.integer(brca$labels) - 1  # 0..4 for Python
+class_names <- levels(brca$labels)
+
+# Hand to Python
+py$X <- as.matrix(X_scaled)
+py$y <- y_int
+py$class_names <- class_names
+dim(py$X)
+```
+
+::: {.callout-tip}
+## How to read this output
+
+`X_concat` is 671 × 15,366 (4 blocks side-by-side). After `scale()`, every feature has mean 0 and standard deviation 1. We pass it to Python through reticulate's `py$` namespace.
+:::
+
+### Step 2 — Build and train the VAE (Python)
+
+```{python}
+#| label: train-vae
+#| cache: true
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset
+
+torch.manual_seed(42)
+np.random.seed(42)
+
+# Hyperparameters
+latent_dim = 32
+hidden = [512, 256]
+beta = 1.0
+epochs = 80
+batch_size = 64
+lr = 1e-3
+
+X_t = torch.tensor(np.asarray(X), dtype=torch.float32)
+y_t = torch.tensor(np.asarray(y), dtype=torch.long)
+
+n, p = X_t.shape
+device = "cpu"   # CPU is fine for this size
+
+class VAE(nn.Module):
+    def __init__(self, p, hidden, latent):
+        super().__init__()
+        # Encoder
+        enc = []
+        prev = p
+        for h in hidden:
+            enc += [nn.Linear(prev, h), nn.ReLU()]
+            prev = h
+        self.enc = nn.Sequential(*enc)
+        self.mu = nn.Linear(prev, latent)
+        self.logvar = nn.Linear(prev, latent)
+        # Decoder
+        dec = []
+        prev = latent
+        for h in reversed(hidden):
+            dec += [nn.Linear(prev, h), nn.ReLU()]
+            prev = h
+        dec += [nn.Linear(prev, p)]
+        self.dec = nn.Sequential(*dec)
+
+    def encode(self, x):
+        h = self.enc(x)
+        return self.mu(h), self.logvar(h)
+
+    def reparam(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def decode(self, z):
+        return self.dec(z)
+
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        z = self.reparam(mu, logvar)
+        x_hat = self.decode(z)
+        return x_hat, mu, logvar
+
+def vae_loss(x, x_hat, mu, logvar, beta):
+    recon = F.mse_loss(x_hat, x, reduction="sum") / x.size(0)
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
+    return recon + beta * kld, recon, kld
+
+model = VAE(p, hidden, latent_dim).to(device)
+opt = torch.optim.Adam(model.parameters(), lr=lr)
+
+loader = DataLoader(TensorDataset(X_t, y_t), batch_size=batch_size, shuffle=True)
+
+trace = []
+for epoch in range(epochs):
+    model.train()
+    tot, tot_r, tot_k = 0., 0., 0.
+    for xb, _ in loader:
+        opt.zero_grad()
+        xh, mu, logvar = model(xb)
+        loss, r, k = vae_loss(xb, xh, mu, logvar, beta)
+        loss.backward()
+        opt.step()
+        tot   += loss.item() * xb.size(0)
+        tot_r += r.item()    * xb.size(0)
+        tot_k += k.item()    * xb.size(0)
+    trace.append((tot/n, tot_r/n, tot_k/n))
+
+print(f"Final epoch: total={trace[-1][0]:.1f} recon={trace[-1][1]:.1f} kld={trace[-1][2]:.1f}")
+```
+
+::: {.callout-tip}
+## How to read this output
+
+The final printed line shows the per-sample reconstruction error, KL divergence, and their sum. **Reconstruction should fall** monotonically (the model gets better at reproducing the input). **KL** typically rises in the first few epochs then plateaus (the encoder stops returning trivial Gaussians). If the reconstruction stalls at a high value, training is under-fit; if KL collapses to zero, the model is ignoring the latent code (the *posterior collapse* failure mode).
+:::
+
+### Step 3 — Extract the latent embeddings
+
+```{python}
+#| label: extract-latent
+model.eval()
+with torch.no_grad():
+    mu, _ = model.encode(X_t)
+Z = mu.cpu().numpy()
+print(Z.shape)
+```
+
+### Step 4 — Visualise the latent space with UMAP
+
+```{python}
+#| label: umap
+#| fig-cap: "UMAP projection of the 32-dim VAE latent space, coloured by PAM50 subtype. Cluster separation is the key sanity check for the embedding."
+import matplotlib.pyplot as plt
+try:
+    import umap
+    reducer = umap.UMAP(random_state=42, n_neighbors=20, min_dist=0.3)
+    emb = reducer.fit_transform(Z)
+except Exception:
+    from sklearn.decomposition import PCA
+    emb = PCA(n_components=2, random_state=42).fit_transform(Z)
+
+palette = ["#66c2a5","#fc8d62","#8da0cb","#e78ac3","#a6d854"]
+plt.figure(figsize=(7,5))
+for k, name in enumerate(class_names):
+    idx = np.asarray(y) == k
+    plt.scatter(emb[idx,0], emb[idx,1], s=18, alpha=0.8,
+                c=palette[k], label=name, edgecolor="white", linewidths=0.4)
+plt.legend(frameon=False, title="PAM50")
+plt.xlabel("UMAP 1"); plt.ylabel("UMAP 2")
+plt.title("VAE latent space (PAM50 colour)")
+plt.tight_layout()
+plt.show()
+```
+
+::: {.callout-tip}
+## How to read this figure
+
+Each dot is a patient placed by UMAP on a 2D map of the 32-dim latent space. Colour = PAM50 subtype. *Subtype clusters* would indicate that the unsupervised VAE preserved class structure. *Mixed colours throughout* would indicate that the latent space is dominated by non-PAM50 variation (technical, immune, anatomical) — not necessarily a failure, but it tells you the VAE is not the right tool if PAM50 stratification is the goal on this sample size.
+:::
+
+### Step 5 — Downstream classifier on the latent embedding
+
+```{python}
+#| label: classify
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+
+clf = LogisticRegression(max_iter=2000, multi_class="multinomial",
+                         class_weight="balanced", C=1.0)
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+scores = cross_val_score(clf, Z, y, cv=cv, scoring="balanced_accuracy")
+print(f"5-fold balanced accuracy: {scores.mean():.3f} ± {scores.std():.3f}")
+print(f"=> approx. balanced error rate: {1-scores.mean():.3f}")
+```
+
+::: {.callout-tip}
+## How to read this output
+
+A logistic regression trained on the 32-dim VAE latent + PAM50 labels, evaluated by stratified 5-fold cross-validation. **Balanced accuracy** is the average of per-class recall (1 − BER). Compare this against the BER from sPLS-DA (0.35) and DIABLO (0.24) in the previous chapters.
+
+Expect this VAE on 671 samples to land somewhere between the two: it has the non-linearity advantage but suffers from limited sample size for deep models.
+:::
+
+## Critical interpretation
+
+Three diagnostics matter for any VAE in multi-omics:
+
+::: {.callout-caution}
+## Diagnostic 1 — Did the model converge?
+
+The reconstruction term should fall monotonically and plateau; the KL term should rise then stabilise. If the KL term is *zero* at the end, you have suffered *posterior collapse*: the model ignores the latent code and acts as a deterministic autoencoder. Common fixes: lower $\beta$, add KL annealing, or use a richer decoder.
+:::
+
+::: {.callout-caution}
+## Diagnostic 2 — Is the latent space biologically organised?
+
+The UMAP plot should show *some* PAM50 structure, even if not perfectly. Random clouds would mean the VAE's latent space is governed by technical or unrelated biological axes; in that case the embedding is not useful for subtype-related downstream tasks.
+:::
+
+::: {.callout-caution}
+## Diagnostic 3 — Does the latent embedding rival the linear methods?
+
+If the VAE classifier underperforms DIABLO and MOFA2 on this dataset, that is the expected outcome and the right conclusion is methodological: **for $n < 1{,}000$, linear methods usually win on multi-omics integration**. VAEs become competitive at $n > 5{,}000$ or with transfer learning. Reporting this honestly is part of the value of a comparative tutorial.
+:::
+
+## Limitations
+
+- **Sample-hungry.** Reliable VAE training in multi-omics typically needs $n > 1{,}000$.
+- **Black-box latent space.** No direct feature loadings; interpretation requires SHAP [@lundberg2017shap] or attention-based attribution.
+- **Hyperparameter sensitive.** Hidden-layer sizes, $\beta$, learning rate, batch size, and the latent dimension all matter; a careful study would do a small grid search.
+- **Posterior collapse** is a real failure mode that requires inspection of the KL term during training.
+- **Reproducibility.** Even with seeds set, GPU vs CPU and library versions can produce slightly different latent spaces.
+- **Concatenated input loses the multi-block structure.** More sophisticated architectures (e.g. CustOmics, OmiVAE) preserve per-block structure with separate encoders fused at the bottleneck.
+
+## What this leaves on the table
+
+We now have six methods, all evaluated on the same patients with the same outcome. The natural next question is **which method should you actually use, and when?** That is the topic of the [final chapter](../08_comparison/comparison.qmd), which lines up the per-class performance, runtime, interpretability and recommended use case across the six methods, and applies them to a harder problem (subtype discovery in nine rare cancers) where the methods stop having a known label to anchor against.
